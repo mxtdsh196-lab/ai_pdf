@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #生成 ai_pdf v2（Typst引擎）沙盒包
-import base64, hashlib, io, json, os
+import base64, hashlib, json, os
 
 # ============================================================
 # ai_pdf 唯一打包入口（真源 = .typst_test/lib）
 # 别在别处跑打包脚本：dev_package 下曾有一份 v1.0.0 weasyprint 的
 # make_package.py，误跑会让整包退回 12 个工具。已归档到 _archive_v1。
 # ============================================================
-# LIB 默认取脚本自身所在目录：同一份打包器在开发机和开源仓库里都能跑。
-# 需要指向别处时用 AI_PDF_LIB 覆盖。
-LIB = os.environ.get('AI_PDF_LIB') or os.path.dirname(os.path.abspath(__file__))
+LIB = '/sdcard/Download/.typst_test/lib'
 OUT = '/sdcard/Download/Operit/dev_package/ai_pdf/ai_pdf.js'
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
@@ -20,7 +18,9 @@ theme = open(os.path.join(LIB, 'theme2.typ'), 'rb').read()
 texm = open(os.path.join(LIB, 'texmath.py'), 'rb').read()
 mdm = open(os.path.join(LIB, 'mermaid.py'), 'rb').read()
 mdm2 = open(os.path.join(LIB, 'mermaid2.py'), 'rb').read()
-ver = hashlib.sha256(core + md2t + theme + texm + mdm + mdm2).hexdigest()[:16]
+fxg = open(os.path.join(LIB, 'fxgen.py'), 'rb').read()
+qrg = open(os.path.join(LIB, 'qrgen.py'), 'rb').read()
+ver = hashlib.sha256(core + md2t + theme + texm + mdm + mdm2 + fxg + qrg).hexdigest()[:16]
 print('version', ver, 'sizes', len(core), len(md2t), len(theme))
 
 PARAMS = [
@@ -65,6 +65,31 @@ COMPONENTS = (
  '::: timeline时间|说明 （时间线）'
  '::: steps每行一个步骤 （编号步骤）'
  '::: defs术语|定义 （定义表）'
+ '【统一样式参数】以下三个参数可加在 cards/compare/price/team/capsule 等组件后：'
+ '  style=flat|shadow|glass|gradient|outline （阴影/玻璃/渐变/描边）'
+ '  radius=0|4|8|pill （圆角）'
+ '  tone=primary|success|warn|danger|neutral|soft （配色）'
+ '  例：::: cards2 style=shadow radius=8 tone=success'
+ '【胶囊标题】::: capsule 标题文字 （可加 tone=danger solid=false）'
+ '【商业组件】'
+ '::: qrcode 内容|说明 （真实可扫二维码，说明可省）'
+ '::: price 套餐|价格|功能1,功能2,功能3|推荐标签 （推荐标签可省，最后一行可标"推荐"）'
+ '::: faq 问题|答案 （每行一组问答）'
+ '::: team 姓名|职位|简介 （每行一人，最多3列）'
+ '::: invoice 品名|数量|单价 （每行一项，小计与合计自动算）'
+ '::: cert name|张三 title|证书名 body|正文 org|署名单位 date|日期 serial|编号 （每行 键|值）'
+ '::: resume 时间|标题|描述 （简历时间线，描述可省）'
+ '::: skills 标签1|标签2|标签3 （技能标签组）'
+ '::: menu 菜品|价格|备注 （菜单，备注可省）'
+ '::: poster hero|主标题 sub|副标题 when|时间 where|地点 note|补充 （海报主视觉，每行 键|值）'
+ '【特效】SVG 只做装饰，文字仍由 Typst 排（可选中可搜索）：'
+ '::: fx glow tone=primary （泛光卡片，正文写在里面）'
+ '::: fx frost （磨砂玻璃卡片，正文写在里面）'
+ '::: fx noise （噪点纹理，无正文）'
+ '::: fx gradient c1=2547A8 c2=7C3AED （流体渐变，正文写在里面）'
+ '::: fx wave （波浪分割线，无正文）'
+ '::: curve M10,70 C60,20 140,95 270,30 （自定义曲线，写 SVG path，可加 color=BE123C width=3）'
+ '【行内颜色】[文字]{color=danger} 语义色；[文字]{color=#BE123C} 指定十六进制；[文字]{gradient=true} 渐变字。'
  '::: pagebreak （强制分页，空内容）'
  '::: toc （自动目录，空内容）'
  '**每个 ::: 必须配对闭合**：开头 ::: progress 换行写数据，结尾单独一行 :::。漏了闭合后面全乱。'
@@ -292,7 +317,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.0.1',
+ 'version': '2.1.0',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('【AI生成 PDF·做PDF就用本包】Markdown一步转中文精排 PDF。真圆角卡片、渐变表头、胶囊徽章、KPI数据卡、进度条、评分、横条图、时间线、步骤、定义表、对比双栏、六色提示框、封面页、页眉页脚、水印，字号/行距/边距/字体全可调。'
@@ -301,7 +326,7 @@ meta = {
  'en': 'Use this package for ANY PDF creation. Markdown to typeset Chinese PDF with rounded cards, gradient table headers, pill badges, KPI cards, progress bars, ratings, bar charts, timelines, steps, definition lists, compare columns,6-color callouts, cover page, headers/footers, watermark; fonts/sizes/margins tunable. Typst engine (~1s per3-page doc). Includes preview, merge, split, extract, rotate, compress, images-to-PDF, text extraction.'},
  'enabledByDefault': True,
  'category': 'File',
- 'author': ['mxtdsh196'],
+ 'author': ['Operit'],
  'tools': tools,
 }
 
@@ -316,6 +341,8 @@ const THEME = RUNTIME + '/theme2.typ';
 const TEXM = RUNTIME + '/texmath.py';
 const MDM = RUNTIME + '/mermaid.py';
 const MDM2 = RUNTIME + '/mermaid2.py';
+const FXG = RUNTIME + '/fxgen.py';
+const QRG = RUNTIME + '/qrgen.py';
 const VERFILE = RUNTIME + '/.ver';
 const VER = '__VER__';
 const CORE_B64 = '__CORE__';
@@ -324,6 +351,8 @@ const THEME_B64 = '__THEME__';
 const TEXM_B64 = '__TEXM__';
 const MDM_B64 = '__MDM__';
 const MDM2_B64 = '__MDM2__';
+const FXG_B64 = '__FXG__';
+const QRG_B64 = '__QRG__';
 const LIBS_B64 = '__LIBS__';
 const LOCAL_TYPST = [
  '/sdcard/Download/.typst_test/typst-aarch64-unknown-linux-musl/typst',
@@ -407,6 +436,8 @@ async function ensure() {
  await Tools.Files.writeBinary(TEXM, TEXM_B64);
  await Tools.Files.writeBinary(MDM, MDM_B64);
   await Tools.Files.writeBinary(MDM2, MDM2_B64);
+  await Tools.Files.writeBinary(FXG, FXG_B64);
+  await Tools.Files.writeBinary(QRG, QRG_B64);
  await unpackLibs();
  await Tools.Files.write(VERFILE, VER);
  }
@@ -704,13 +735,7 @@ for _p in LIB_DIRS:
             _fp = os.path.join(_dp, _f)
             _libs[_p + '/' + os.path.relpath(_fp, _r)] = open(_fp, encoding='utf-8').read()
 import gzip as _gz
-_libs_raw = json.dumps(_libs, ensure_ascii=False).encode('utf-8')
-# 关键：gzip 默认写入当前时间戳（gzip 头里的 mtime），导致同样内容每次打包 byte 不同。
-# 市场发布要拿本地构件和 Release 资产比 hash，不可复现就永远对不上。mtime=0 后构建可复现。
-_gz_buf = io.BytesIO()
-with _gz.GzipFile(fileobj=_gz_buf, mode='wb', compresslevel=9, mtime=0) as _gz_fh:
-    _gz_fh.write(_libs_raw)
-LIBS_B64 = base64.b64encode(_gz_buf.getvalue()).decode('ascii')
+LIBS_B64 = base64.b64encode(_gz.compress(json.dumps(_libs, ensure_ascii=False).encode('utf-8'), 9)).decode('ascii')
 if not _libs:
     raise SystemExit('ERROR: typst 库为空，检查 ' + LIB_ROOT)
 print('libs embedded:', len(_libs), 'files,', len(LIBS_B64), 'b64 chars')
@@ -723,16 +748,18 @@ js = (JS.replace('__META__', json.dumps(meta, ensure_ascii=False, indent=2))
  .replace('__TEXM__', base64.b64encode(texm).decode('ascii'))
  .replace('__MDM__', base64.b64encode(mdm).decode('ascii'))
  .replace('__MDM2__', base64.b64encode(mdm2).decode('ascii'))
+ .replace('__FXG__', base64.b64encode(fxg).decode('ascii'))
+ .replace('__QRG__', base64.b64encode(qrg).decode('ascii'))
  .replace('__LIBS__', LIBS_B64))
 
 open(OUT, 'w', encoding='utf-8').write(js)
-print('written', OUT, os.path.getsize(OUT), 'bytes')
+print('written', OUT, len(js), 'bytes')
 print('meta tools', len(meta['tools']))
 
 # ---- 真源指纹：方便和 runtime 比对，下次「改了不生效」一眼看出 ----
 import hashlib as _hl
 for _n in ('core.py', 'md2typst.py', 'theme2.typ', 'gen_package.py',
-           'mermaid.py', 'mermaid2.py', 'texmath.py'):
+           'mermaid.py', 'mermaid2.py', 'texmath.py', 'fxgen.py', 'qrgen.py'):
     _p = os.path.join(LIB, _n)
     if os.path.exists(_p):
         print('src', _n, _hl.md5(open(_p, 'rb').read()).hexdigest()[:8])

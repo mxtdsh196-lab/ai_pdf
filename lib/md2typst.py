@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """markdown -> typst（pandoc JSON AST + 组件 fenced div）"""
-import subprocess, shutil, json, re, os, sys
+import subprocess, shutil, json, re, os, sys, tempfile
 
 PANDOC = shutil.which("pandoc") or "/usr/bin/pandoc"
 
@@ -631,6 +631,317 @@ class R:
         return None if all(x == "left" for x in per) else per
 
     # ============ 组件 ============
+    def _qrcode(self, blocks):
+        """二维码。数据行：内容|说明（说明可省）"""
+        rows = []
+        for k, payload, _lv in self._lines(blocks or []):
+            if k != "line":
+                continue
+            txt = self._text(payload).strip()
+            if txt:
+                rows.append(txt)
+        if not rows:
+            WARNINGS.append("qrcode 里没有内容，无法生成二维码")
+            return ""
+        head = rows[0]
+        parts = [p.strip() for p in head.split("|")]
+        data = parts[0]
+        caption = parts[1] if len(parts) > 1 else ""
+        try:
+            import qrgen
+            r = qrgen.render_png(data, "M", box=8, border=4)
+            if r is None:
+                WARNINGS.append("qrcode 内容过长，无法生成（上限约 200 字节）")
+                return ""
+            png, dim, ver = r
+            fd, path = tempfile.mkstemp(suffix=".png", prefix="qr_")
+            os.close(fd)
+            open(path, "wb").write(png)
+            opt = "" if not caption else ", caption: [%s]" % esc(caption)
+            return "#qrcode(%s, size: 30mm%s)" % (q(path), opt)
+        except Exception as e:
+            WARNINGS.append("qrcode 生成失败：%s" % str(e)[:60])
+            return ""
+
+    def _price(self, blocks):
+        """价格表。每行：套餐|价格|功能1,功能2|推荐标签（可省）"""
+        items = []
+        for k, payload, _lv in self._lines(blocks or []):
+            if k != "line":
+                continue
+            parts = [self._text(p).strip() for p in self._split_pipe(payload)]
+            if len(parts) < 2:
+                WARNINGS.append("price 这一行少于 2 列，已跳过：%s" % (parts[0] if parts else ""))
+                continue
+            nm = parts[0]
+            pr = parts[1]
+            feats = [x.strip() for x in (parts[2] if len(parts) > 2 else "").split(",") if x.strip()]
+            hot = parts[3] if len(parts) > 3 else ""
+            fl = ", ".join("[" + esc(f) + "]" for f in feats) if feats else ""
+            items.append("(%s, %s, (%s%s), %s)" % (q(nm), q(pr), fl, "," if feats else "", q(hot)))
+        if not items:
+            WARNINGS.append("price 没有数据行")
+            return ""
+        n = len(items)
+        cols = n if n <= 3 else 3
+        return "#price-plans((%s), cols: %d)" % (", ".join(items), cols)
+
+    def _faq(self, blocks):
+        """FAQ。每行：问题|答案"""
+        items = []
+        for k, payload, _lv in self._lines(blocks or []):
+            if k != "line":
+                continue
+            parts = [self._text(p).strip() for p in self._split_pipe(payload)]
+            if len(parts) < 2:
+                WARNINGS.append("faq 需要「问题|答案」两列，这一行已跳过")
+                continue
+            items.append("([%s], [%s])" % (esc(parts[0]), esc(parts[1])))
+        if not items:
+            WARNINGS.append("faq 没有数据行")
+            return ""
+        return "#faq((%s,))" % ", ".join(items)
+
+    def _team(self, blocks, cls, kvs=None):
+        """团队介绍。每行：姓名|职位|简介"""
+        items = []
+        for k, payload, _lv in self._lines(blocks or []):
+            if k != "line":
+                continue
+            parts = [self._text(p).strip() for p in self._split_pipe(payload)]
+            if len(parts) < 2:
+                WARNINGS.append("team 需要「姓名|职位|简介」，这一行已跳过")
+                continue
+            nm = parts[0]
+            role = parts[1]
+            bio = parts[2] if len(parts) > 2 else ""
+            items.append("([%s], [%s], [%s])" % (esc(nm), esc(role), esc(bio)))
+        if not items:
+            WARNINGS.append("team 没有数据行")
+            return ""
+        n = len(items)
+        cols = n if n <= 3 else 3
+        return "#team((%s,), cols: %d)" % (", ".join(items), cols)
+
+    def _fx(self, blocks, cls, kvs=None):
+        """特效块。用法：::: fx frost / glow / noise / gradient / wave"""
+        kvs = kvs or {}
+        # pandoc 会把 ::: fx glow 里的 glow 解析成 data-title，不是第二个 class
+        kind = (cls[1] if len(cls) > 1 else
+                kvs.get("title") or kvs.get("data-title") or
+                kvs.get("kind") or kvs.get("data-kind") or "frost")
+        kind = str(kind).strip().lower()
+        # 收集正文（保留为 Typst 内容，不进 SVG）
+        body = []
+        for k, payload, _lv in self._lines(blocks or []):
+            if k == "line":
+                body.append(self.ins(payload))
+        body_txt = " ".join(x for x in body if x)
+        pad = kvs.get("padding") or kvs.get("pad") or "5mm"
+        rad = kvs.get("radius") or "6"
+        tone = kvs.get("tone") or "primary"
+        if kind == "glow":
+            return "#fx-glow([%s], color: %s, inset-v: %s, rad: %s)" % (body_txt, q(tone), pad, rad)
+        if kind in ("frost", "glass"):
+            return "#fx-frost([%s], rat: %s, inset-v: %s)" % (body_txt, rad, pad)
+        # 其余属于纯装饰图层：生成 SVG 叠在下面，文字仍用 Typst
+        try:
+            import fxgen
+            w = int(kvs.get("w") or 600)
+            h = int(kvs.get("h") or 220)
+            col = kvs.get("color") or kvs.get("c1")
+            c2 = kvs.get("c2")
+            if kind == "noise":
+                # 用栅格 PNG：SVG 的 feTurbulence 会膨胀成海量 path，实测 37KB 涨到 3.4MB
+                png = fxgen.noise_png(w * 2, h * 2)
+                if png:
+                    fd, path = tempfile.mkstemp(suffix=".png", prefix="fxn_")
+                    os.close(fd)
+                    open(path, "wb").write(png)
+                    if body_txt:
+                        return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
+                    return "#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path)
+                svg = fxgen.noise_texture(w, h)
+            elif kind == "gradient":
+                a = (col.lstrip(chr(35)) if col else None)
+                b = (c2.lstrip(chr(35)) if c2 else None)
+                svg = fxgen.gradient_blob(w, h, a or "2547A8", b or "7C3AED")
+            elif kind == "wave":
+                svg = fxgen.wave_divider(w, h)
+            else:
+                WARNINGS.append("fx 的 kind 写了 %s，支持 frost/glow/noise/gradient/wave，已按 grid 跳过" % kind)
+                return body_txt
+            path = self._write_tmp(svg, ".svg")
+            if not path:
+                return body_txt
+            if body_txt:
+                return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
+            return "#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path)
+        except Exception as e:
+            WARNINGS.append("fx 生成失败：%s" % str(e)[:60])
+            return body_txt
+
+    def _curve(self, blocks, cls, kvs=None):
+        """自定义曲线装饰。首行写 SVG path，例如 M10,70 C60,20 140,95 270,30"""
+        kvs = kvs or {}
+        path_d = str(kvs.get("path") or kvs.get("data-path") or "")
+        for k, payload, _lv in self._lines(blocks or []):
+            if k != "line":
+                continue
+            t = self._text(payload).strip()
+            if t and not path_d:
+                path_d = t
+        if not path_d:
+            path_d = "M10,70 C60,20 140,95 270,30"
+            WARNINGS.append("curve 没写 path，已用默认曲线。写法：M10,70 C60,20 140,95 270,30")
+        if not (path_d.startswith(chr(77)) or path_d.startswith(chr(109))):
+            WARNINGS.append("curve 的 path 必须以 M 开头（SVG path 语法），已加前缀")
+            path_d = "M" + path_d
+        try:
+            import fxgen
+            w = int(kvs.get("w") or 280)
+            h = int(kvs.get("h") or 90)
+            col = kvs.get("color")
+            aw = kvs.get("width") or "2.5"
+            svg = fxgen.curve_ornament(w, h, path_d, (col.lstrip(chr(35)) if col else "1F7A5C"), float(aw))
+            p = self._write_tmp(svg, ".svg")
+            if not p:
+                return ""
+            return "#fx-curve(%s)" % q(p)
+        except Exception as e:
+            WARNINGS.append("curve 生成失败：%s" % str(e)[:60])
+            return ""
+
+    def _write_tmp(self, content, suffix):
+        """把内容写成临时文件，返回路径。XML 头会自动补。"""
+        try:
+            if not content.lstrip().startswith("<"):
+                return None
+            fd, path = tempfile.mkstemp(suffix=suffix, prefix="fx_")
+            os.close(fd)
+            open(path, "w", encoding="utf-8").write(content)
+            return path
+        except Exception:
+            return None
+
+    def _rows_of(self, blocks):
+        """把组件内容拆成 [(cells...)]，每行用 | 分隔"""
+        out = []
+        for k, payload, _lv in self._lines(blocks or []):
+            if k != "line":
+                continue
+            cells = [self._text(p).strip() for p in self._split_pipe(payload)]
+            if any(cells):
+                out.append(cells)
+        return out
+
+    def _invoice(self, blocks, cls, kvs=None):
+        """发票明细。每行：品名|数量|单价|小计（小计可省，自动算）"""
+        kvs = kvs or {}
+        rows = self._rows_of(blocks)
+        if not rows:
+            WARNINGS.append("invoice 没有数据行")
+            return ""
+        items = []
+        for r in rows:
+            if len(r) < 3:
+                WARNINGS.append("invoice 需要「品名|数量|单价」，这一行跳过：%s" % r[0])
+                continue
+            nm = r[0]
+            try:
+                qty = float(r[1])
+                price = float(r[2])
+            except Exception:
+                WARNINGS.append("invoice 的数量/单价不是数字，这一行跳过：%s" % nm)
+                continue
+            items.append("(%s, %g, %g)" % (q(nm), qty, price))
+        if not items:
+            return ""
+        cur = kvs.get("currency") or "¥"
+        return "#invoice-table((%s,), currency: %s)" % (", ".join(items), q(cur))
+
+    def _cert(self, blocks):
+        """证书。每行 键|值，键支持 name/title/body/org/date/serial"""
+        rows = self._rows_of(blocks)
+        kv = {}
+        for r in rows:
+            if len(r) >= 2:
+                kv[r[0].lower()] = r[1]
+            elif len(r) == 1:
+                kv.setdefault("body", r[0])
+        if not kv:
+            WARNINGS.append("cert 没有数据。写法：name|张三 或 title|优秀员工")
+            return ""
+        opts = []
+        for k in ("name", "title", "body", "org", "date", "serial"):
+            if k in kv:
+                opts.append("%s: [%s]" % (k, esc(kv[k])))
+        if "body" not in kv:
+            WARNINGS.append("cert 没写正文（body），证书会是空的")
+        return "#cert-sheet(%s)" % ", ".join(opts)
+
+    def _resume(self, blocks):
+        """简历时间线。每行：时间|标题|描述（描述可省）"""
+        rows = self._rows_of(blocks)
+        items = []
+        for r in rows:
+            if len(r) < 2:
+                WARNINGS.append("resume 需要「时间|标题」，这一行跳过")
+                continue
+            when = r[0]
+            what = r[1]
+            desc = r[2] if len(r) > 2 else ""
+            items.append("([%s], [%s], [%s])" % (esc(when), esc(what), esc(desc)))
+        if not items:
+            WARNINGS.append("resume 没有数据行")
+            return ""
+        return "#resume-timeline((%s,))" % ", ".join(items)
+
+    def _skills(self, blocks):
+        """技能标签。每行一个标签，或用 | 分隔多个"""
+        tags = []
+        for r in self._rows_of(blocks):
+            for t in r:
+                if t:
+                    tags.append(t)
+        if not tags:
+            WARNINGS.append("skills 没有标签")
+            return ""
+        return "#skill-tags((%s,))" % ", ".join(q(t) for t in tags)
+
+    def _menu(self, blocks):
+        """菜单。每行：菜品|价格|备注（备注可省）"""
+        items = []
+        for r in self._rows_of(blocks):
+            if len(r) < 2:
+                WARNINGS.append("menu 需要「菜品|价格」，这一行跳过")
+                continue
+            nm = r[0]
+            pr = r[1]
+            note = r[2] if len(r) > 2 else ""
+            items.append("([%s], [%s], [%s])" % (esc(nm), esc(pr), esc(note)))
+        if not items:
+            WARNINGS.append("menu 没有数据行")
+            return ""
+        return "#menu-list((%s,))" % ", ".join(items)
+
+    def _poster(self, blocks):
+        """海报主视觉。每行 键|值，键支持 hero/sub/when/where/note"""
+        kv = {}
+        for r in self._rows_of(blocks):
+            if len(r) >= 2:
+                kv[r[0].lower()] = r[1]
+            elif len(r) == 1:
+                kv.setdefault("hero", r[0])
+        if not kv:
+            WARNINGS.append("poster 没有数据。写法：hero|活动名称")
+            return ""
+        opts = []
+        for k in ("hero", "sub", "when", "where", "note"):
+            if k in kv:
+                opts.append("%s: [%s]" % (k, esc(kv[k])))
+        return "#poster(%s)" % ", ".join(opts)
+
     def _slide(self, name, cls, kvs, inner):
         """幻灯片版式。数据行用 | 分隔字段。"""
         rows = []
@@ -799,7 +1110,8 @@ class R:
         name = cls[0] if cls else ""
 
         # 空组件：有 ::: xxx 但没有内容，几乎肯定是忘写数据行
-        _EMPTY_OK = ("pagebreak", "toc", "no-break", "nobreak")
+        _EMPTY_OK = ("pagebreak", "toc", "no-break", "nobreak",
+                     "fx", "effect", "noise", "wave")
         if name and name not in _EMPTY_OK and not any(
                 k == "line" for k, _p, _l in self._lines(inner or [])):
             WARNINGS.append("组件 ::: %s 里没有任何数据行，渲染出来会是空块" % name)
@@ -851,6 +1163,37 @@ class R:
             self.o.append("#pagebreak()\n\n")
         elif name == "toc":
             self.o.append("#sectiontoc()\n\n")
+        elif name in ("invoice", "bill"):
+            self.o.append(self._invoice(inner, cls, kvs) + chr(10) * 2)
+        elif name in ("cert", "certificate"):
+            self.o.append(self._cert(inner) + chr(10) * 2)
+        elif name in ("resume", "timeline-cv", "cv"):
+            self.o.append(self._resume(inner) + chr(10) * 2)
+        elif name in ("menu", "menu-list"):
+            self.o.append(self._menu(inner) + chr(10) * 2)
+        elif name in ("skills", "skill-tags"):
+            self.o.append(self._skills(inner) + chr(10) * 2)
+        elif name in ("poster", "hero"):
+            self.o.append(self._poster(inner) + chr(10) * 2)
+        elif name in ("fx", "effect"):
+            self.o.append(self._fx(inner, cls, kvs) + chr(10) * 2)
+        elif name in ("curve", "ornament"):
+            self.o.append(self._curve(inner, cls, kvs) + chr(10) * 2)
+        elif name in ("capsule", "pill"):
+            body = " ".join(self.ins(pl) for k, pl, _ in self._lines(inner or []) if k == "line")
+            tone = kvs.get("tone") or kvs.get("data-tone") or "primary"
+            solid = kvs.get("solid") or kvs.get("data-solid")
+            sb = "false" if (solid is not None and str(solid).lower() in ("false", "0", "no")) else "true"
+            sz = kvs.get("size") or "12pt"
+            self.o.append("#capsule([%s], tone: %s, solid: %s, size: %s)" % (body, q(tone), sb, sz) + chr(10) * 2)
+        elif name == "qrcode":
+            self.o.append(self._qrcode(inner) + chr(10) * 2)
+        elif name in ("price", "pricing"):
+            self.o.append(self._price(inner) + chr(10) * 2)
+        elif name in ("faq", "qa"):
+            self.o.append(self._faq(inner) + chr(10) * 2)
+        elif name in ("team", "people"):
+            self.o.append(self._team(inner, cls, kvs) + chr(10) * 2)
         elif name.startswith("slide-") or name == "slide":
             self.o.append(self._slide(name, cls, kvs, inner) + chr(10) * 2)
         elif name == "font":
@@ -1122,7 +1465,15 @@ class R:
             items.append("([%s], [%s])" % (title or "", b))
         if not items:
             return ""
-        return "#cardgrid((\n  %s,\n), cols: %s)" % (",\n  ".join(items), cols)
+        # 样式参数：style / radius / tone
+        _st = str(kvs.get("style") or kvs.get("data-style") or "flat").lower()
+        if _st not in ("flat", "shadow", "glass", "gradient", "outline", "none"):
+            WARNINGS.append("cards 的 style 写了 %s，只支持 flat/shadow/glass/gradient/outline，已按 flat" % _st)
+            _st = "flat"
+        _rad = str(kvs.get("radius") or kvs.get("data-radius") or "4")
+        _tone = str(kvs.get("tone") or kvs.get("data-tone") or "primary").lower()
+        extra = ", style: %s, rad: %s, tone: %s" % (q(_st), _rad if _rad.isdigit() or _rad == "pill" else "4", q(_tone))
+        return "#cardgrid((\n  %s,\n), cols: %s%s)" % (",\n  ".join(items), cols, extra)
 
     def _wrap(self, blocks, cls, kvs=None):
         """文字环绕。首行写障碍框：位置|宽|高，其余行为正文。"""
@@ -1365,6 +1716,9 @@ class R:
             for _cl in cls:
                 if _cl.startswith("f-") and not _fam:
                     _fam = _cl[2:].replace("-", " ")
+            _grad = kvs.get("gradient") or kvs.get("data-gradient")
+            if _grad is not None and str(_grad).lower() not in ("false", "0", "no"):
+                body = "#grad-text[%s]" % body
             if _fam or _wt or _sz or _fill:
                 _opts = []
                 if _fam:
@@ -1375,7 +1729,16 @@ class R:
                 if _sz:
                     _opts.append("size: %s" % _sz)
                 if _fill:
-                    _opts.append("fill: rgb(%s)" % q(_fill))
+                    _f = str(_fill).strip()
+                    _SEM = ("primary", "success", "warn", "danger", "neutral", "soft")
+                    if _f.lower() in _SEM:
+                        _opts.append("fill: tone-color(%s)" % q(_f.lower()))
+                    else:
+                        _hex = _f.lstrip("#")
+                        if len(_hex) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in _hex):
+                            _opts.append("fill: rgb(%s)" % q(_hex))
+                        else:
+                            WARNINGS.append("行内 color 写了 %s，既不是语义色也不是 6 位十六进制，已忽略" % _f)
                 body = "#text(%s)[%s]" % (", ".join(_opts), body)
             # inline font: [text]{.font-Cinzel} / {.f-Source_Han_Serif_SC}
             for _c in cls:

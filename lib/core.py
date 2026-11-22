@@ -25,26 +25,11 @@ THEMES = {
     'slide': dict(bf='Noto Sans CJK SC', hf='Noto Sans CJK SC', margin='15mm', size='13pt', leading='0.74em', h1='20pt', h2='14pt', h3='12pt', h4='11pt', h1fill='false', h1bar='false'),
 }
 
-# 路径策略：环境变量优先 → 自身目录相对路径 → 内置默认值
-# 这样同一份代码既能在 Operit 沙盒包里跑，也能独立部署
-PKG_DIR = os.environ.get('AI_PDF_PKG_DIR') or os.path.join(HERE, 'typst-packages')
+PKG_DIR = os.path.join(HERE, 'typst-packages')
 if not os.path.isdir(PKG_DIR):
-    _fallback = '/sdcard/Download/.ai_pdf_runtime/typst-packages'
-    if os.path.isdir(_fallback):
-        PKG_DIR = _fallback
+    PKG_DIR = '/sdcard/Download/.ai_pdf_runtime/typst-packages'
 
-
-def _font_dirs():
-    """字体目录：AI_PDF_FONT_DIRS（os.pathsep 分隔）优先，其次内置默认。"""
-    env = os.environ.get('AI_PDF_FONT_DIRS')
-    if env:
-        return [x for x in env.split(os.pathsep) if x]
-    return [os.path.join(HERE, 'fonts'),
-            '/sdcard/Download/Operit/projects/ai-pdf/fonts',
-            '/sdcard/Download/ai_pdf_fonts']
-
-
-FONT_DIRS = _font_dirs()
+FONT_DIRS = ['/sdcard/Download/Operit/projects/ai-pdf/fonts', '/sdcard/Download/ai_pdf_fonts', os.path.join(HERE, 'fonts')]
 
 PAPER = {'a4': 'a4', 'a5': 'a5', 'letter': 'us-letter', 'a3': 'a3', 'b5': 'b5',
          '16-9': 'presentation-16-9', '169': 'presentation-16-9',

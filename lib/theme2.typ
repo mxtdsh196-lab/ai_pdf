@@ -21,6 +21,132 @@
 #let mf = cfg.mono-font
 #let bs = cfg.base-size
 
+// ---------- 大统一样式系统（style / radius / tone） ----------
+// 设计目标：AI 只需记住 3 个词，不碰具体像素。
+//   style: flat | shadow | glass | gradient | outline
+//   radius: 0 | 4 | 8 | pill
+//   tone: primary | success | warn | danger | neutral | soft
+
+#let tone-color(t) = {
+  if t == "success" { rgb("#1F7A5C") }
+  else if t == "warn" { rgb("#B45309") }
+  else if t == "danger" { rgb("#BE123C") }
+  else if t == "neutral" { luma(110) }
+  else if t == "soft" { soft }
+  else { accent }
+}
+
+#let radius-of(r) = {
+  if r == "pill" { 999pt }
+  else if type(r) == str {
+    if r == "0" { 0pt } else if r == "4" { 4pt } else if r == "8" { 8pt } else { 6pt }
+  }
+  else if type(r) == int { r * 1pt }
+  else { 6pt }
+}
+
+#let card-style(style: "flat", tone: "primary", rad: 8, base-fill: none) = {
+  let tc = tone-color(tone)
+  let rf = if base-fill == none { soft2 } else { base-fill }
+  let r = radius-of(rad)
+  if style == "shadow" { (rf, 0.5pt + lc, r) }
+  else if style == "glass" { (rf.transparentize(35%), 0.8pt + rgb("#FFFFFF").transparentize(40%), r) }
+  else if style == "gradient" { (gradient.linear(rf, tc.transparentize(88%), angle: 135deg), none, r) }
+  else if style == "outline" { (none, 1pt + tc, r) }
+  else { (rf, 0.6pt + lc, r) }
+}
+
+// 纯 Typst 仿阴影：下方垫一层偏移浅色块，文字层不丢
+#let shadowed(body, rad: 8pt, depth: 2.5pt, tint: luma(214)) = {
+  // 做法：用一个 block 自身画「外扩一圈的浅色底」，再用负 inset 把内容压回内部。
+  // 全程不依赖 height: 100%（那在流式布局里会撑满可用高度，灰块会盖住整页）。
+  block(
+    width: 100%,
+    radius: rad,
+    fill: tint,
+    inset: (x: 0pt, y: 0pt),
+    outset: (bottom: depth, right: 1.5pt, top: 0pt, left: 0pt),
+  )[#body]
+}
+
+// 胶囊标题
+#let capsule(body, tone: "primary", solid: true, size: 12pt) = {
+  let tc = tone-color(tone)
+  box(radius: 999pt,
+    fill: if solid { tc } else { none },
+    stroke: if solid { none } else { 1pt + tc },
+    inset: (x: 5mm, y: 2.4mm),
+    text(font: hf, size: size, weight: "bold",
+      fill: if solid { rgb("#FFFFFF") } else { tc })[#body])
+}
+
+// 行内颜色 / 渐变
+#let clr(body, color: "primary") = text(fill: tone-color(color))[#body]
+#let grad-text(body) = text(fill: gradient.linear(accent, accent2, angle: 15deg))[#body]
+
+// 二维码
+#let qrcode(src, size: 30mm, caption: none) = block(width: 100%, above: 8pt, below: 8pt)[
+  #align(center)[
+    #image(src, width: size)
+    #if caption != none [#v(2pt) #text(size: 8.5pt, fill: luma(120))[#caption]]
+  ]
+]
+
+// 价格表
+#let price-plans(items, cols: 3) = {
+  grid(columns: (1fr,) * cols, gutter: 5mm,
+    ..items.map(((nm, pr, feats, hot)) => block(
+      width: 100%, radius: 6pt, inset: 6mm,
+      stroke: if hot != "" { 1.6pt + accent } else { 0.6pt + lc },
+      fill: if hot != "" { soft2 } else { rgb("#FFFFFF") },
+    )[
+      #if hot != "" [
+        #box(radius: 999pt, fill: accent, inset: (x: 3mm, y: 1.2mm),
+          text(size: 8pt, fill: rgb("#FFFFFF"), weight: "bold")[#hot])
+        #v(2mm)
+      ]
+      #block(width: 100%, text(font: hf, size: 11pt, weight: "bold", fill: ink)[#nm])
+      #v(2mm)
+      #block(width: 100%, text(font: hf, size: 22pt, weight: "bold", fill: accent)[#pr])
+      #v(3mm)
+      #block(width: 100%, height: 0.5pt, fill: lc)
+      #v(3mm)
+      #for f in feats [
+        #block(width: 100%, text(size: 9.5pt, fill: luma(80))[· #f])
+        #v(1.2mm)
+      ]
+    ]))
+}
+
+// FAQ
+#let faq(items) = block(width: 100%)[
+  #for (i, (q, a)) in items.enumerate() [
+    #block(width: 100%, inset: (left: 4mm), stroke: (left: 2.5pt + accent))[
+      #block(width: 100%, text(font: hf, size: 10.5pt, weight: "bold", fill: ink)[#q])
+      #v(1.6mm)
+      #block(width: 100%, text(size: 9.5pt, fill: luma(85))[#a])
+    ]
+    #v(3.5mm)
+  ]
+]
+
+// 团队介绍
+#let team(items, cols: 3) = {
+  grid(columns: (1fr,) * cols, gutter: 5mm,
+    ..items.map(((nm, role, bio)) => block(
+      width: 100%, inset: 4mm, radius: 5pt, stroke: 0.5pt + lc, fill: soft2,
+    )[
+      #block(width: 12mm, height: 12mm, radius: 999pt, fill: accent.transparentize(80%))
+      #v(2mm)
+      #block(width: 100%, text(font: hf, size: 10.5pt, weight: "bold", fill: ink)[#nm])
+      #v(1mm)
+      #block(width: 100%, text(size: 8.5pt, fill: accent)[#role])
+      #v(1.6mm)
+      #block(width: 100%, text(size: 8.5pt, fill: luma(100))[#bio])
+    ]))
+}
+
+
 // ---------- 页面 ----------
 #set page(
   paper: cfg.paper,
@@ -253,23 +379,192 @@
 ]
 
 // ---------- 卡片 ----------
-#let card(title, body) = block(
-  width: 100%, radius: 4pt, fill: white,
-  stroke: 0.6pt + lc, inset: (x: 12pt, y: 10pt),
-)[
-  #if title != "" [
-    #text(font: hf, size: bs * 0.95, weight: "bold", fill: accent)[#title]
-    #v(4pt)
-  ]
-  #set text(size: bs * 0.9)
-  #body
+
+// ---------- 特效层（SVG 装饰 + Typst 文字） ----------
+// 关键设计：SVG 只做背景/装饰，正文永远由 Typst 排。
+// 这样磨砂/泛光卡片的**文字仍然可选中、可搜索、可复制**。
+
+#let fx-layer(src, w, h) = place(top + left, image(src, width: w, height: h))
+
+#let fx-card(body, src, inset-v: 5mm) = block(width: 100%)[
+  #place(top + left, image(src, width: 100%))
+  #pad(x: inset-v, y: inset-v)[#body]
 ]
 
-#let cardgrid(items, cols: 2) = {
+#let fx-glow(body, color: "primary", inset-v: 5mm, rad: 6, tint: none) = {
+  // 泛光：outside 形状在内容外围画一圈半透明同色描边
+  let tc = tone-color(color)
+  let base = rgb("#FFFFFF")
+  let rr = radius-of(rad)
+  block(
+    width: 100%, radius: rr, inset: inset-v,
+    fill: if tint == none { soft2 } else { tint },
+    stroke: 2pt + tc.transparentize(82%),
+  )[#body]
+}
+
+#let fx-frost(body, rat: 6, inset-v: 5mm, tint: none) = {
+  // 磨砂玻璃：浅灰蓝半透明底（在白纸上才看得见）+ 亮边 + 左侧高光竖条
+  let base = if tint == none { rgb("#EEF3FA") } else { tint }
+  block(
+    width: 100%, radius: radius-of(rat), inset: inset-v,
+    fill: base.transparentize(12%),
+    stroke: 0.9pt + rgb("#FFFFFF"),
+  )[
+    #place(top + left, dx: 0pt, dy: 0pt,
+      box(width: 2.5pt, height: 100%, fill: rgb("#FFFFFF").transparentize(45%)))
+    #body
+  ]
+}
+
+#let fx-curve(src, w: 100%) = block(width: 100%, above: 6pt, below: 6pt)[
+  #align(center)[#image(src, width: w)]
+]
+
+
+// ---------- 商业组件（发票 / 证书 / 简历 / 菜单） ----------
+
+// 发票明细表：自动算合计
+#let invoice-table(items, cols: (3fr, 1fr, 1.2fr, 1.2fr), currency: "¥") = {
+  let total = 0.0
+  for it in items {
+    total += it.at(1) * it.at(2)
+  }
+  block(width: 100%)[
+    #grid(columns: cols, gutter: 0pt,
+      ..(("品名", "数量", "单价", "小计").map(h =>
+        block(width: 100%, inset: (x: 4pt, y: 5pt), fill: accent,
+          text(size: 9pt, fill: rgb("#FFFFFF"), weight: "bold")[#h]))),
+      ..items.map(it => {
+        let sub = it.at(1) * it.at(2)
+        (
+          block(width: 100%, inset: (x: 4pt, y: 5pt), stroke: (bottom: 0.4pt + lc))[#text(size: 9pt)[#it.at(0)]],
+          block(width: 100%, inset: (x: 4pt, y: 5pt), stroke: (bottom: 0.4pt + lc))[#align(right)[#text(size: 9pt)[#it.at(1)]]],
+          block(width: 100%, inset: (x: 4pt, y: 5pt), stroke: (bottom: 0.4pt + lc))[#align(right)[#text(size: 9pt)[#currency#it.at(2)]]],
+          block(width: 100%, inset: (x: 4pt, y: 5pt), stroke: (bottom: 0.4pt + lc))[#align(right)[#text(size: 9pt, weight: "bold")[#currency#sub]]],
+        )
+      }).flatten(),
+    )
+    #v(3mm)
+    #align(right)[
+      #block(inset: (x: 5mm, y: 3mm), radius: 3pt, fill: soft2)[
+        #text(font: hf, size: 11pt, weight: "bold", fill: accent)[合计：#currency#total]
+      ]
+    ]
+  ]
+}
+
+// 证书
+#let cert-sheet(name: "", title: "荣誉证书", body: "", org: "", date: "", serial: "") = {
+  block(width: 100%, radius: 3pt, inset: (x: 14mm, y: 12mm),
+    stroke: 2.2pt + accent, fill: rgb("#FFFDF8"))[
+    #block(width: 100%, radius: 2pt, inset: (x: 10mm, y: 9mm), stroke: 0.6pt + accent.transparentize(60%))[
+      #align(center)[
+        #text(font: hf, size: 24pt, weight: "bold", fill: accent)[#title]
+        #v(3mm)
+        #block(width: 28mm, height: 2pt, fill: accent)
+      ]
+      #v(8mm)
+      #if name != "" [
+        #align(center)[#text(font: hf, size: 15pt, weight: "bold")[#name]]
+        #v(5mm)
+      ]
+      #block(width: 100%, inset: (x: 6mm), text(size: 10.5pt, fill: luma(70))[#body])
+      #v(10mm)
+      #grid(columns: (1fr, 1fr),
+        align(right)[#text(size: 10pt, fill: luma(90))[#org] #v(2mm) #block(width: 34mm, height: 0.6pt, fill: luma(150))],
+        align(right)[#text(size: 10pt, fill: luma(90))[#date] #v(2mm) #block(width: 34mm, height: 0.6pt, fill: luma(150))],
+      )
+      #if serial != "" [
+        #v(4mm)
+        #align(center)[#text(size: 8pt, fill: luma(160))[证书编号：#serial]]
+      ]
+    ]
+  ]
+}
+
+// 简历时间线（左时间右内容）
+#let resume-timeline(items) = block(width: 100%)[
+  #for (i, (when, what, desc)) in items.enumerate() [
+    #grid(columns: (32mm, 1fr), gutter: 4mm,
+      block(width: 100%, inset: (top: 1.2mm), align(right)[
+        #text(size: 9pt, fill: luma(110))[#when]
+      ]),
+      block(width: 100%, inset: (left: 4mm), stroke: (left: 1.6pt + accent))[
+        #block(width: 100%, text(font: hf, size: 10.5pt, weight: "bold")[#what])
+        #if desc != "" [
+          #v(1.4mm)
+          #block(width: 100%, text(size: 9pt, fill: luma(90))[#desc])
+        ]
+      ],
+    )
+    #v(4mm)
+  ]
+]
+
+// 技能标签组
+#let skill-tags(items) = block(width: 100%)[
+  #for (i, s) in items.enumerate() [
+    #box(radius: 999pt, fill: soft, inset: (x: 3.2mm, y: 1.4mm),
+      text(size: 9pt, fill: accent, weight: "bold")[#s])
+    #h(1.5mm)
+  ]
+]
+
+// 菜单菜品行（名称 …… 价格）
+#let menu-list(items) = block(width: 100%)[
+  #for (i, (nm, pr, note)) in items.enumerate() [
+    #grid(columns: (1fr, auto), gutter: 2mm,
+      block(width: 100%)[
+        #text(font: hf, size: 10.5pt, weight: "bold")[#nm]
+        #if note != "" [#h(2mm) #text(size: 8.5pt, fill: luma(120))[#note]]
+      ],
+      block(inset: (top: 1.4mm), text(font: hf, size: 10.5pt, weight: "bold", fill: accent)[#pr]),
+    )
+    #v(0.8mm)
+    #block(width: 100%, height: 0.4pt, fill: lc)
+    #v(2.2mm)
+  ]
+]
+
+// 海报主视觉块
+#let poster(hero: "", sub: "", when: "", where: "", note: "") = {
+  block(width: 100%, radius: 4pt, inset: (x: 12mm, y: 10mm),
+    fill: gradient.linear(accent, accent2, angle: 135deg))[
+    #align(center)[
+      #block(width: 100%, text(font: hf, size: 26pt, weight: "bold", fill: rgb("#FFFFFF"))[#hero])
+      #if sub != "" [#v(3mm) #block(width: 100%, text(size: 12pt, fill: rgb("#FFFFFF").transparentize(15%))[#sub])]
+      #v(7mm)
+      #block(width: 22mm, height: 2pt, fill: rgb("#FFFFFF").transparentize(40%))
+      #v(6mm)
+      #if when != "" [#block(width: 100%, text(size: 10.5pt, fill: rgb("#FFFFFF"))[#when])]
+      #if where != "" [#v(2mm) #block(width: 100%, text(size: 10.5pt, fill: rgb("#FFFFFF"))[#where])]
+      #if note != "" [#v(5mm) #block(width: 100%, text(size: 9pt, fill: rgb("#FFFFFF").transparentize(25%))[#note])]
+    ]
+  ]
+}
+
+#let card(title, body, style: "flat", rad: 4, tone: "primary") = {
+  let cs = card-style(style: style, tone: tone, rad: rad, base-fill: rgb("#FFFFFF"))
+  let inner = block(
+    width: 100%, radius: cs.at(2), fill: cs.at(0), stroke: cs.at(1),
+    inset: (x: 12pt, y: 10pt),
+  )[
+    #if title != "" [
+      #text(font: hf, size: bs * 0.95, weight: "bold", fill: tone-color(tone))[#title]
+      #v(4pt)
+    ]
+    #set text(size: bs * 0.9)
+    #body
+  ]
+  if style == "shadow" { shadowed(rad: cs.at(2), depth: 2.5pt)[#inner] } else { inner }
+}
+
+#let cardgrid(items, cols: 2, style: "flat", rad: 4, tone: "primary") = {
   if items.len() == 0 { return }
   grid(
     columns: (1fr,) * cols, gutter: 8pt,
-    ..items.map(it => card(it.at(0), it.at(1))),
+    ..items.map(it => card(it.at(0), it.at(1), style: style, rad: rad, tone: tone)),
   )
 }
 
