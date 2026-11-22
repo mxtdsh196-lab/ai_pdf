@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #生成 ai_pdf v2（Typst引擎）沙盒包
-import base64, hashlib, json, os
+import base64, hashlib, io, json, os
 
 # ============================================================
 # ai_pdf 唯一打包入口（真源 = .typst_test/lib）
 # 别在别处跑打包脚本：dev_package 下曾有一份 v1.0.0 weasyprint 的
 # make_package.py，误跑会让整包退回 12 个工具。已归档到 _archive_v1。
 # ============================================================
-LIB = '/sdcard/Download/.typst_test/lib'
-OUT = '/sdcard/Download/Operit/dev_package/ai_pdf/ai_pdf.js'
+# LIB 自定位：脚本就在 lib/ 里，用它自己的目录，不写死绝对路径。
+# 写死的话别人 clone 下来构建会去读本机路径（上次就是这么漏的）。
+LIB = os.path.dirname(os.path.abspath(__file__))
+OUT = os.environ.get('AI_PDF_OUT') or '/sdcard/Download/Operit/dev_package/ai_pdf/ai_pdf.js'
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 core = open(os.path.join(LIB, 'core.py'), 'rb').read()
@@ -20,12 +22,44 @@ mdm = open(os.path.join(LIB, 'mermaid.py'), 'rb').read()
 mdm2 = open(os.path.join(LIB, 'mermaid2.py'), 'rb').read()
 fxg = open(os.path.join(LIB, 'fxgen.py'), 'rb').read()
 qrg = open(os.path.join(LIB, 'qrgen.py'), 'rb').read()
-ver = hashlib.sha256(core + md2t + theme + texm + mdm + mdm2 + fxg + qrg).hexdigest()[:16]
-print('version', ver, 'sizes', len(core), len(md2t), len(theme))
+xry = open(os.path.join(LIB, 'pdfxray.py'), 'rb').read()
+# 打包器必须把自己也辞进包：否则 runtime 里的 gen_package.py 永远是旧版，
+# 审查者/AI 去读那份会被误导（实测 runtime 副本停在只算 5 个文件的旧逻辑）。
+# 注意：不能把自身算进 ver，那是自引用（需要算自己的 hash 才能算自己的 hash），
+# 单独用 .gnpver 控制自嵌文件的重写。
+_SELF = os.path.abspath(__file__)
+gnp_raw = open(_SELF, 'rb').read()
+# 内嵌副本的 LIB 必须写成真实部署路径：AI 在手机上读 runtime/gen_package.py
+# 时要能看到实际路径，而不是构建机的临时目录。
+gnp = gnp_raw.replace(
+    b"LIB = os.path.dirname(os.path.abspath(__file__))",
+    b"LIB = '/sdcard/Download/.typst_test/lib'")
+if gnp == gnp_raw:
+    print('NOTE: LIB 行未替换（可能已是绝对路径）')
+gnpver = hashlib.sha256(gnp).hexdigest()[:16]
+ver = hashlib.sha256(core + md2t + theme + texm + mdm + mdm2 + fxg + qrg + xry).hexdigest()[:16]
+print('version', ver, 'gnpver', gnpver, 'sizes', len(core), len(md2t), len(theme))
+
+# 组件数量不能写死：之前写「11类组件」实际早已 31 类，描述一直在撒谎。
+# 从 md2typst 的分发分支实时推导，加新组件时描述自动跟上。
+import re as _re
+_md2src = md2t.decode('utf-8') if isinstance(md2t, bytes) else md2t
+_elif = _re.findall(r"elif\s+name\s*==\s*['\"]([^'\"]+)['\"]", _md2src)
+_groups = _re.findall(r"name\s+in\s*\(([^)]*)\)", _md2src)
+_comp_main = list(_elif)
+_comp_alias = len(_elif)
+for _g in _groups:
+    _al = _re.findall(r"['\"]([a-z0-9_-]+)['\"]", _g)
+    _comp_alias += len(_al)
+    if _al:
+        _comp_main.append(_al[0])
+COMP_COUNT = len(_comp_main)
+COMP_ALIAS = _comp_alias
+print('components', COMP_COUNT, 'names/aliases', COMP_ALIAS)
 
 PARAMS = [
  ('output_path', '输出 PDF的完整路径，如 /sdcard/Download/report.pdf', True),
- ('content', 'Markdown正文（默认）。支持标题/表格/列表/引用/代码块/任务清单，以及下方11类组件 div。', False),
+ ('content', 'Markdown正文（默认）。支持标题/表格/列表/引用/代码块/任务清单，以及下方 %d 类组件 div（%d 个名字/别名，完整清单见 COMPONENTS）。' % (COMP_COUNT, COMP_ALIAS), False),
  ('input_path', '也可传已有 .md文件路径，代替 content', False),
  ('input_format', 'markdown（默认）或 html（按原始 HTML处理）', False),
  ('theme', '版式：report(报告讲义/宋体/默认)、handout(黑体紧凑)、resume(简历)、editorial(杂志/楷体)、minimal(极简)、certificate(证书)、slide(PPT幻灯片/16:9横版/每个#一级标题=一页)', False),
@@ -82,13 +116,14 @@ COMPONENTS = (
  '::: skills 标签1|标签2|标签3 （技能标签组）'
  '::: menu 菜品|价格|备注 （菜单，备注可省）'
  '::: poster hero|主标题 sub|副标题 when|时间 where|地点 note|补充 （海报主视觉，每行 键|值）'
- '【特效】SVG 只做装饰，文字仍由 Typst 排（可选中可搜索）：'
- '::: fx glow tone=primary （泛光卡片，正文写在里面）'
- '::: fx frost （磨砂玻璃卡片，正文写在里面）'
- '::: fx noise （噪点纹理，无正文）'
- '::: fx gradient c1=2547A8 c2=7C3AED （流体渐变，正文写在里面）'
- '::: fx wave （波浪分割线，无正文）'
+ '【特效】SVG 只做装饰，文字仍由 Typst 排（可选中可搜索）。程度全部可调：'
+ '::: fx glow tone=primary strength=82 width=2pt （泛光：strength=描边透明度 0~100，越大越淡；width=描边粗细）'
+ '::: fx frost opacity=12 light=45 bar=2.5pt border=0.9pt （磨砂：opacity=底色不透明 0~100 越大越实；light=高光条透明度；bar=高光条宽；border=边框粗）'
+ '::: fx noise alpha=0.12 （噪点：alpha=颗粒浓度 0~1，写 30 也行=30%）'
+ '::: fx gradient c1=2547A8 c2=7C3AED angle=135 strength=0.85 （流体渐变：angle=光斑角度 0~360；strength=浓度 0~1）'
+ '::: fx wave amp=8 color=EEF2F9 （波浪分割线：amp=波幅 1~40）'
  '::: curve M10,70 C60,20 140,95 270,30 （自定义曲线，写 SVG path，可加 color=BE123C width=3）'
+ '阴影程度：::: cards2 style=shadow sh-depth=2.5pt sh-spread=1.5pt sh-tint=dark （sh-depth=向下偏移 0.5~12pt；sh-spread=右下外扩 0~8pt；sh-tint=light|mid|dark 或 6 位十六进制）'
  '【行内颜色】[文字]{color=danger} 语义色；[文字]{color=#BE123C} 指定十六进制；[文字]{gradient=true} 渐变字。'
  '::: pagebreak （强制分页，空内容）'
  '::: toc （自动目录，空内容）'
@@ -205,12 +240,22 @@ tools.append({
 
 tools.append({
  'name': 'pdf_lint',
- 'description': {'zh': '程序化版式体检：查空白页、文字溢出页边界、贴边、图片分辨率过低、页面尺寸不一致、字体未嵌入。比人眼看图更靠谱，交付前跑一次。',
-  'en': 'Programmatic layout lint: blank pages, text overflow, near-edge, low-DPI images, page size mismatch, non-embedded fonts.'},
+ 'description': {'zh': '程序化版式体检：查空白页、文字溢出页边界、贴边、图片分辨率过低、页面尺寸不一致、字体未嵌入。比人眼看图更靠谱，交付前跑一次。注意：只查几何与字体，不查内容完整性——组件被压穿、元素重叠、文字被裁、豆腐块都可能 0 errors，仍需看图确认。',
+  'en': 'Programmatic layout lint: blank pages, text overflow, near-edge, low-DPI images, page size mismatch, non-embedded fonts. Geometry/font checks only, NOT content integrity — overlaps, clipping, tofu boxes can still pass with 0 errors; inspect the rendered page.'},
  'parameters': [
   {'name': 'pdf_path', 'description': {'zh': 'PDF 路径', 'en': 'PDF 路径'}, 'type': 'string', 'required': True},
   {'name': 'tol_mm', 'description': {'zh': '溢出容差毫米，默认2', 'en': '溢出容差毫米，默认2'}, 'type': 'string', 'required': False},
   {'name': 'min_dpi', 'description': {'zh': '图片最低 dpi，默认150', 'en': '图片最低 dpi，默认150'}, 'type': 'string', 'required': False},
+ ]})
+tools.append({
+ 'name': 'pdf_xray',
+ 'description': {'zh': '把 PDF 解析成你能直接读的结构，不用看图。每页给出三块：① 布局字符画（形状画边框、文字显示原字，坐标就是真实坐标）② 可疑项（文字跨越边框/文字重叠/出界/豆腐块，带精确 pt 数）③ 特效清单（阴影偏移量、磨砂透明度、泛光描边透明度、渐变处数、噪点图尺寸、曲线路径）+ 逐元素坐标/尺寸/颜色/字号。用来回答「我写的东西放出来长什么样」：卡片有没有压边框、两列间距多少、颜色有没有生效、阴影多重。注意它读的是几何与绘制指令，看不到「好不好看」，审美仍需人判断。',
+  'en': 'Parse a PDF into structure you can read directly, no image recognition. Per page: (1) layout ASCII art (shapes as borders, real text at real coordinates) (2) anomalies with exact pt values (text crossing a border / overlapping text / out of page / tofu) (3) effects inventory (shadow offset, frost opacity, glow stroke opacity, gradient count, noise bitmap size, curve paths) plus per-element bbox/color/size. Answers "what does my markup actually render as": did text cross a card border, how wide is the gutter, did my color apply, how heavy is the shadow. It reads geometry and draw ops only — aesthetics still need a human.'},
+ 'parameters': [
+  {'name': 'pdf_path', 'description': {'zh': 'PDF 路径', 'en': 'PDF path'}, 'type': 'string', 'required': True},
+  {'name': 'pages', 'description': {'zh': '页码：1 / 1-3 / 1,4 / all，默认第1页', 'en': 'Pages: 1 / 1-3 / 1,4 / all. Default first page.'}, 'type': 'string', 'required': False},
+  {'name': 'cols', 'description': {'zh': '字符画宽度（列），默认72。越大越精细但行越长', 'en': 'ASCII art width in columns, default 72.'}, 'type': 'string', 'required': False},
+  {'name': 'detail', 'description': {'zh': 'full(默认，图+可疑+特效+元素) / art(只要字符画) / brief(可疑+特效，不要字符画)', 'en': 'full(default) / art / brief'}, 'type': 'string', 'required': False},
  ]})
 tools.append({
  'name': 'check_font_coverage',
@@ -317,7 +362,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.1.0',
+ 'version': '2.2.0',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('【AI生成 PDF·做PDF就用本包】Markdown一步转中文精排 PDF。真圆角卡片、渐变表头、胶囊徽章、KPI数据卡、进度条、评分、横条图、时间线、步骤、定义表、对比双栏、六色提示框、封面页、页眉页脚、水印，字号/行距/边距/字体全可调。'
@@ -343,6 +388,8 @@ const MDM = RUNTIME + '/mermaid.py';
 const MDM2 = RUNTIME + '/mermaid2.py';
 const FXG = RUNTIME + '/fxgen.py';
 const QRG = RUNTIME + '/qrgen.py';
+const GNP = RUNTIME + '/gen_package.py';
+const XRY = RUNTIME + '/pdfxray.py';
 const VERFILE = RUNTIME + '/.ver';
 const VER = '__VER__';
 const CORE_B64 = '__CORE__';
@@ -353,6 +400,10 @@ const MDM_B64 = '__MDM__';
 const MDM2_B64 = '__MDM2__';
 const FXG_B64 = '__FXG__';
 const QRG_B64 = '__QRG__';
+const GNP_B64 = '__GNP__';
+const XRY_B64 = '__XRY__';
+const GNPVERFILE = RUNTIME + '/.gnpver';
+const GNPVER = '__GNPVER__';
 const LIBS_B64 = '__LIBS__';
 const LOCAL_TYPST = [
  '/sdcard/Download/.typst_test/typst-aarch64-unknown-linux-musl/typst',
@@ -438,6 +489,16 @@ async function ensure() {
   await Tools.Files.writeBinary(MDM2, MDM2_B64);
   await Tools.Files.writeBinary(FXG, FXG_B64);
   await Tools.Files.writeBinary(QRG, QRG_B64);
+ let needGnp = true;
+ try {
+ const gv = await Tools.Files.read(GNPVERFILE);
+ needGnp = String((gv && gv.content) || '').trim() !== GNPVER;
+ } catch (e) { needGnp = true; }
+ if (needGnp) {
+ await Tools.Files.writeBinary(GNP, GNP_B64);
+ await Tools.Files.writeBinary(XRY, XRY_B64);
+ await Tools.Files.write(GNPVERFILE, GNPVER);
+ }
  await unpackLibs();
  await Tools.Files.write(VERFILE, VER);
  }
@@ -514,7 +575,8 @@ async function list_pdf_themes() {
  { name: 'resume', use: '简历/CV。四边等距、留白干净' },
  { name: 'editorial', use: '杂志稿/内刊/长文。楷体标题+大页边距' },
  { name: 'minimal', use: '公文/技术文档。去渐变，只用细线' },
- { name: 'certificate', use: '证书/奖状。大字号、宽边距，建议配 gold + cover=false' }
+ { name: 'certificate', use: '证书/奖状。大字号、宽边距，建议配 gold + cover=false' },
+ { name: 'slide', use: 'PPT 幻灯片，16:9。每个 # 一级标题自动一页；含 8 种版式 slide-cover/section/quote/cols/stats/compare/flow/split' }
  ],
  palettes: [
  { name: 'blue', use: '通用专业蓝（默认）' },
@@ -577,7 +639,21 @@ async function rotate_pdf_pages(p) {
 
 async function compress_pdf(p) {
  if (!p.pdf_path || !p.output_path) throw new Error('pdf_path/output_path required');
+ // 必须先确认输入文件存在且是合法 PDF。
+ // 之前这里没校验：Ghostscript 在输入缺失时仍会创建空白 PDF 且退出码 0，
+ // 于是「压缩成功」返回的其实是 1 页空白文件（实测 2218 字节）。
  const before = await call('info', { pdf: p.pdf_path },90000);
+ if (!before || before.success === false || !before.file_size) {
+ throw new Error('PDF not found or not a valid PDF: ' + p.pdf_path +
+ (before && before.error ? ' (' + before.error + ')' : ''));
+ }
+ if (p.pdf_path === p.output_path) {
+ throw new Error('output_path must differ from pdf_path');
+ }
+ // 输入存在但可能加密，gs 无法处理加密 PDF，提前拒绝而不是产出垃圾
+ if (before.encrypted === true) {
+ throw new Error('input PDF is encrypted; decrypt it first (decrypt_pdf)');
+ }
  const quality = p.quality || 'ebook';
  const preset = { screen: '/screen', ebook: '/ebook', printer: '/printer' }[quality] || '/ebook';
  const cmd = 'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dPDFSETTINGS=' +
@@ -614,6 +690,16 @@ async function extract_pdf_text(p) {
 async function pdf_selfcheck() {
  const j = await call('selfcheck', {},120000);
  return j;
+}
+
+async function pdf_xray(p) {
+ if (!p.pdf_path) throw new Error('pdf_path is required');
+ return await call('xray', {
+ pdf: p.pdf_path,
+ pages: p.pages || '1',
+ cols: p.cols || 72,
+ detail: p.detail || 'full'
+ }, 300000);
 }
 
 async function pdf_lint(p) {
@@ -704,6 +790,7 @@ exports.extract_pdf_pages = wrap(extract_pdf_pages);
 exports.rotate_pdf_pages = wrap(rotate_pdf_pages);
 exports.compress_pdf = wrap(compress_pdf);
 exports.images_to_pdf = wrap(images_to_pdf);
+exports.pdf_xray = wrap(pdf_xray);
 exports.pdf_lint = wrap(pdf_lint);
 exports.check_font_coverage = wrap(check_font_coverage);
 exports.match_font = wrap(match_font);
@@ -728,14 +815,23 @@ for _p in LIB_DIRS:
     if not os.path.isdir(_r):
         print('WARN lib dir missing:', _r)
         continue
-    for _dp, _dn, _fs in os.walk(_r):
-        for _f in _fs:
+    for _dp, _dn, _fs in sorted(os.walk(_r)):
+        for _f in sorted(_fs):
             if not (_f.endswith('.typ') or _f.endswith('.toml')):
                 continue
             _fp = os.path.join(_dp, _f)
             _libs[_p + '/' + os.path.relpath(_fp, _r)] = open(_fp, encoding='utf-8').read()
 import gzip as _gz
-LIBS_B64 = base64.b64encode(_gz.compress(json.dumps(_libs, ensure_ascii=False).encode('utf-8'), 9)).decode('ascii')
+# sort_keys + mtime=0：不信顺序和上时间戳就会让同内容构建出不同字节（实测两侧差 1520 字节）
+_libs_json = json.dumps(_libs, ensure_ascii=False, sort_keys=True).encode('utf-8')
+try:
+    _gz_bytes = _gz.compress(_libs_json, 9, mtime=0)
+except TypeError:
+    import gzip as _gz2
+    _buf = io.BytesIO()
+    with _gz2.GzipFile(fileobj=_buf, mode='wb', compresslevel=9, mtime=0) as _f: _f.write(_libs_json)
+    _gz_bytes = _buf.getvalue()
+LIBS_B64 = base64.b64encode(_gz_bytes).decode('ascii')
 if not _libs:
     raise SystemExit('ERROR: typst 库为空，检查 ' + LIB_ROOT)
 print('libs embedded:', len(_libs), 'files,', len(LIBS_B64), 'b64 chars')
@@ -750,16 +846,19 @@ js = (JS.replace('__META__', json.dumps(meta, ensure_ascii=False, indent=2))
  .replace('__MDM2__', base64.b64encode(mdm2).decode('ascii'))
  .replace('__FXG__', base64.b64encode(fxg).decode('ascii'))
  .replace('__QRG__', base64.b64encode(qrg).decode('ascii'))
+ .replace('__GNP__', base64.b64encode(gnp).decode('ascii'))
+ .replace('__GNPVER__', gnpver)
+ .replace('__XRY__', base64.b64encode(xry).decode('ascii'))
  .replace('__LIBS__', LIBS_B64))
 
 open(OUT, 'w', encoding='utf-8').write(js)
-print('written', OUT, len(js), 'bytes')
+print('written', OUT, len(js.encode('utf-8')), 'bytes')
 print('meta tools', len(meta['tools']))
 
 # ---- 真源指纹：方便和 runtime 比对，下次「改了不生效」一眼看出 ----
 import hashlib as _hl
 for _n in ('core.py', 'md2typst.py', 'theme2.typ', 'gen_package.py',
-           'mermaid.py', 'mermaid2.py', 'texmath.py', 'fxgen.py', 'qrgen.py'):
+           'mermaid.py', 'mermaid2.py', 'texmath.py', 'fxgen.py', 'qrgen.py', 'pdfxray.py'):
     _p = os.path.join(LIB, _n)
     if os.path.exists(_p):
         print('src', _n, _hl.md5(open(_p, 'rb').read()).hexdigest()[:8])
