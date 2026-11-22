@@ -902,13 +902,17 @@ class R:
                 # 兼容写成百分数 alpha=30 的情形
                 if _na > 1.0:
                     _na = _na / 100.0
-                png = fxgen.noise_png(int(w * 2), int(h * 2), alpha=_na)
+                # 噪点是横向扁条：按版心宽高比生成（约 483:40 ≈ 12:1），
+                # 生成 600:220 的竖图再插会按原比例撑到 177pt 高（实测）。
+                _nw = int(w * 2)
+                _nh = max(24, int(_nw * 40.0 / 483.0))
+                png = fxgen.noise_png(_nw, _nh, alpha=_na)
                 if png:
                     path = _mkstemp(suffix=".png", prefix="fxn_")
                     open(path, "wb").write(png)
                     if body_txt:
                         return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
-                    return "#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path)
+                    return ("#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path))
                 svg = fxgen.noise_texture(w, h)
             elif kind == "gradient":
                 # c1/c2=两端颜色 angle=光斑角度(0~360) strength=浓度(0~1)
@@ -927,11 +931,11 @@ class R:
                 _wc = ("#" + _wc.lstrip("#")) if _wc else None
                 try:
                     if _wc:
-                        svg = fxgen.wave_divider(int(w), int(h), color=_wc, amp=int(_amp))
+                        svg = fxgen.wave_divider(int(w), 24, color=_wc, amp=int(_amp))
                     else:
-                        svg = fxgen.wave_divider(int(w), int(h), amp=int(_amp))
+                        svg = fxgen.wave_divider(int(w), 24, amp=int(_amp))
                 except TypeError:
-                    svg = fxgen.wave_divider(int(w), int(h))
+                    svg = fxgen.wave_divider(int(w), 24)
                     WARNINGS.append("fx wave 的 amp/color 未被支持（fxgen 版本旧），已用默认")
             else:
                 WARNINGS.append("fx 的 kind 写了 %s，支持 frost/glow/noise/gradient/wave，已按 grid 跳过" % kind)
@@ -941,7 +945,7 @@ class R:
                 return body_txt
             if body_txt:
                 return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
-            return "#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path)
+            return ("#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path))
         except Exception as e:
             WARNINGS.append("fx 生成失败：%s" % str(e)[:60])
             return body_txt
@@ -1340,7 +1344,7 @@ class R:
         elif name == "compare":
             self.o.append(self._compare(inner))
         elif name in ("progress", "rating"):
-            self.o.append(self._numbered(inner, name) + "\n\n")
+            self.o.append(self._numbered(inner, name, cls, kvs) + "\n\n")
         elif name in ("wrapimg", "wrapimage", "wrapimg2"):
             self.o.append(self._wrapimg(inner, cls, kvs) + "\n\n")
         elif name in ("wrap", "circlewrap"):
@@ -1350,11 +1354,11 @@ class R:
             _n = name[8:] if name.startswith("vertical") and name[8:].isdigit() else ""
             self.o.append(self._vertical(inner, cls, kvs, n=_n) + "\n\n")
         elif name == "ring":
-            self.o.append(self._rings(inner) + "\n\n")
+            self.o.append(self._rings(inner, cls, kvs) + "\n\n")
         elif name == "chart":
-            self.o.append(self._chart(inner) + "\n\n")
+            self.o.append(self._chart(inner, cls, kvs) + "\n\n")
         elif name == "timeline":
-            self.o.append(self._timeline(inner) + "\n\n")
+            self.o.append(self._timeline(inner, cls, kvs) + "\n\n")
         elif name == "steps":
             self.o.append(self._steps(inner) + "\n\n")
         elif name == "defs":
@@ -1521,8 +1525,14 @@ class R:
             return ""
         return "#badgerow((\n  %s,\n))" % ",\n  ".join(items)
 
-    def _numbered(self, blocks, fn):
+    def _numbered(self, blocks, fn, cls=None, kvs=None):
         items = []
+        if not [1 for k2, p2, _l2 in self._lines(blocks or []) if k2 == "line" and self._text(p2).strip()]:
+            _h = self._head_text(cls, kvs, skip=1)
+            if _h and str(_h).strip():
+                # 同行写法：pandoc 把数据放进 data-* 而非 inner，不兑底组件会消失
+                # 构造一个 pandoc Plain 节点，供 _lines 正常消费
+                blocks = [{"t": "Plain", "c": [{"t": "Str", "c": str(_h).strip()}]}]
         for kind, payload, _lv in self._lines(blocks):
             if kind != "line":
                 continue
@@ -1532,8 +1542,14 @@ class R:
             items.append("#%s([%s], %s)" % (fn, label, num(raw)))
         return "\n".join(items)
 
-    def _rings(self, blocks, per_row=3):
+    def _rings(self, blocks, cls=None, kvs=None, per_row=3):
         items = []
+        if not [1 for k2, p2, _l2 in self._lines(blocks or []) if k2 == "line" and self._text(p2).strip()]:
+            _h = self._head_text(cls, kvs, skip=1)
+            if _h and str(_h).strip():
+                # 同行写法：pandoc 把数据放进 data-* 而非 inner，不兑底组件会消失
+                # 构造一个 pandoc Plain 节点，供 _lines 正常消费
+                blocks = [{"t": "Plain", "c": [{"t": "Str", "c": str(_h).strip()}]}]
         for kind, payload, _lv in self._lines(blocks):
             if kind != "line":
                 continue
@@ -1548,8 +1564,14 @@ class R:
         body = (",%s  " % chr(10)).join(items)
         return ("#grid(columns: (%s), gutter: 12pt, align: center,%s  %s,%s)%s"
                 % (cols, chr(10), body, chr(10), chr(10)))
-    def _chart(self, blocks):
+    def _chart(self, blocks, cls=None, kvs=None):
         items = []
+        if not [1 for k2, p2, _l2 in self._lines(blocks or []) if k2 == "line" and self._text(p2).strip()]:
+            _h = self._head_text(cls, kvs, skip=1)
+            if _h and str(_h).strip():
+                # 同行写法：pandoc 把数据放进 data-* 而非 inner，不兑底组件会消失
+                # 构造一个 pandoc Plain 节点，供 _lines 正常消费
+                blocks = [{"t": "Plain", "c": [{"t": "Str", "c": str(_h).strip()}]}]
         for kind, payload, _lv in self._lines(blocks):
             if kind != "line":
                 continue
@@ -1561,8 +1583,14 @@ class R:
             return ""
         return "#barchart((\n  %s,\n))" % ",\n  ".join(items)
 
-    def _timeline(self, blocks):
+    def _timeline(self, blocks, cls=None, kvs=None):
         items = []
+        if not [1 for k2, p2, _l2 in self._lines(blocks or []) if k2 == "line" and self._text(p2).strip()]:
+            _h = self._head_text(cls, kvs, skip=1)
+            if _h and str(_h).strip():
+                # 同行写法：pandoc 把数据放进 data-* 而非 inner，不兑底组件会消失
+                # 构造一个 pandoc Plain 节点，供 _lines 正常消费
+                blocks = [{"t": "Plain", "c": [{"t": "Str", "c": str(_h).strip()}]}]
         for kind, payload, _lv in self._lines(blocks):
             if kind != "line":
                 continue
