@@ -416,21 +416,50 @@
 // 磨砂玻璃：浅灰蓝半透明底（在白纸上才看得见）+ 亮边 + 左侧高光竖条
 // opacity=底色的不透明度(0~100，越大越实) light=高光竖条透明度(0~100)
 // bar=高光竖条宽度 border=边框粗细
+// 磨砂玻璃。
+// 演进过程（都是实测过、被否掉的）：
+//   ① 单层半透明纯色 —— 白纸上就是一块浅蓝矩形，毫无磨砂感
+//   ② 斜向高光渐变 —— 有反光但缺颗粒，像亮面塑料
+//   ③ SVG feGaussianBlur —— 效果最像真毛玻璃，但文字被栅格化，不可选不可搜（否决）
+//   ④ PNG 噪点叠加 —— 有效但体积大、放大糊
+//   ⑤ 当前：Typst 原生 tiling 颗粒 + 高光 + 亮边
+//      tiling 是真矢量 pattern（PDF 里 images=0，走 /Pattern），几 KB、任意缩放不糊，
+//      文字仍由 Typst 排 —— 可选、可搜、可复制。
+// 颗粒高度必须用 measure 量内容：place 里的 100% 相对页面（实测只铺满左半边），
+// layout 的 sz.height 是可用高度（也错），只有 measure(inner, width:) 是对的。
 #let fx-frost(body, rat: 6, inset-v: 5mm, tint: none,
-              opacity: 12, light: 45, bar: 2.5pt, border: 0.9pt) = {
+              opacity: 55, light: 30, bar: 2.5pt, border: 0.9pt,
+              grain: 1.8, grain-a: 38) = {
   let o = if type(opacity) == int or type(opacity) == float { opacity * 1% } else { opacity }
   let l = if type(light) == int or type(light) == float { light * 1% } else { light }
   let bw = if type(bar) == int or type(bar) == float { bar * 1pt } else { bar }
   let bd = if type(border) == int or type(border) == float { border * 1pt } else { border }
-  let base = if tint == none { rgb("#EEF3FA") } else { tint }
+  let gs = if type(grain) == int or type(grain) == float { grain * 1pt } else { grain }
+  let ga = if type(grain-a) == int or type(grain-a) == float { grain-a * 1% } else { grain-a }
+  // 底色不能是纯白：白底 + 白颗粒 + 白描边 = 白纸上什么也看不见（实测踩过）。
+  // 用带一点冷调的浅蓝灰，磨砂质感才立得住；可用 tint= 自定。
+  let base = if tint == none { rgb("#DCE7F5") } else { tint }
+  let rad = radius-of(rat)
+  let inner = pad(x: inset-v, y: inset-v, body)
   block(
-    width: 100%, radius: radius-of(rat), inset: inset-v,
+    width: 100%, radius: rad, inset: 0pt,
     fill: base.transparentize(o),
     stroke: bd + rgb("#FFFFFF"),
+    clip: true,
   )[
-    #place(top + left, dx: 0pt, dy: 0pt,
-      box(width: bw, fill: rgb("#FFFFFF").transparentize(l)))
-    #body
+    // 颗粒层：place 的 height: 100% 在 block[...] 内是相对这个 block（不是页面），
+    // 所以能正好铺满。前提是 block 的 inset 必须为 0，否则内部尺寸算不对。
+    #place(top + left, box(width: 100%, height: 100%,
+      fill: tiling(size: (gs, gs),
+        box(width: gs * 0.42, height: gs * 0.42, radius: 50%,
+            fill: rgb("#FFFFFF").transparentize(ga)))))
+    // 顶部镜面高光
+    #place(top + left, block(width: 100%, height: bw,
+      fill: rgb("#FFFFFF").transparentize(l)))
+    // 底部反光细线
+    #place(bottom + left, block(width: 100%, height: 0.5pt,
+      fill: rgb("#FFFFFF").transparentize(70%)))
+    #inner
   ]
 }
 
