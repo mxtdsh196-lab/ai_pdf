@@ -92,25 +92,41 @@ def noise_texture(w=240, h=140, alpha=0.35, freq=0.85):
     return svg
 
 
-def gradient_blob(w=300, h=200, c1='#2547A8', c2='#7C3AED', angle=135):
-    """流体渐变底（极光感）"""
+def gradient_blob(w=300, h=200, c1='#2547A8', c2='#7C3AED', angle=135, strength=0.85):
+    """流体渐变底（极光感）。
+
+    angle 真正生效：两个径向光斑的位置按角度绕中心对向分布。
+    之前 angle 写在签名里但函数体完全没用，6 个角度输出 md5 全同（实测）。
+    strength 控制光斑起始不透明度（0~1）。
+    """
+    import math
     a = _hex(c1)
     b = _hex(c2)
+    ang = float(angle) % 360.0
+    rad = math.radians(ang)
+    # 光斑 1 沿 angle 方向，光斑 2 在对向；半径取 0.28 保证不出画布
+    r1 = 0.28
+    x1 = 0.5 + r1 * math.cos(rad)
+    y1 = 0.5 + r1 * math.sin(rad)
+    x2 = 0.5 - r1 * math.cos(rad)
+    y2 = 0.5 - r1 * math.sin(rad)
+    s1 = max(0.0, min(1.0, float(strength)))
+    s2 = max(0.0, min(1.0, s1 * 0.88))
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">'
         '<defs>'
-        '<radialGradient id="b1" cx="0.25" cy="0.3" r="0.7">'
-        '<stop offset="0" stop-color="%s" stop-opacity="0.85"/>'
+        '<radialGradient id="b1" cx="%.4f" cy="%.4f" r="0.72">'
+        '<stop offset="0" stop-color="%s" stop-opacity="%.2f"/>'
         '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
-        '<radialGradient id="b2" cx="0.78" cy="0.7" r="0.65">'
-        '<stop offset="0" stop-color="%s" stop-opacity="0.75"/>'
+        '<radialGradient id="b2" cx="%.4f" cy="%.4f" r="0.66">'
+        '<stop offset="0" stop-color="%s" stop-opacity="%.2f"/>'
         '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
         '</defs>'
         '<rect width="%d" height="%d" fill="#FFFFFF"/>'
         '<rect width="%d" height="%d" fill="url(#b1)"/>'
         '<rect width="%d" height="%d" fill="url(#b2)"/>'
         '</svg>'
-    ) % (w, h, a, a, b, b, w, h, w, h, w, h)
+    ) % (w, h, x1, y1, a, s1, a, x2, y2, b, s2, b, w, h, w, h, w, h)
     return svg
 
 
