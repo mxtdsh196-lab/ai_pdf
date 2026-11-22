@@ -131,12 +131,16 @@ def gradient_blob(w=300, h=200, c1='#2547A8', c2='#7C3AED', angle=135, strength=
 
 
 def curve_ornament(w=280, h=90, path='M10,70 C60,20 140,95 270,30',
-                   color='#1F7A5C', width=2.5, dot=True):
-    """自定义曲线装饰。path 用 SVG path 语法。"""
+                   color='#1F7A5C', width=2.5, dot=False):
+    """自定义曲线装饰。path 用 SVG path 语法。
+
+    dot 默认关闭：原来把点画在画布正中央 (w/2, h/2)，那个位置不在曲线上，
+    实测出来就是个悬空的实心圆（样张第 6 页可见）。真要在曲线上放点，
+    得对 path 做贝塞尔采样，成本不值得。
+    """
     c = _hex(color, '#1F7A5C')
     dot_svg = ''
     if dot:
-        # 取路径中点附近放一个小圆点
         dot_svg = '<circle cx="%d" cy="%d" r="4" fill="%s"/>' % (w // 2, h // 2, c)
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">'
