@@ -9,9 +9,10 @@ __pycache__/
 *.svg
 !examples/*.pdf
 
-# 打包器输出
-ai_pdf.js
-ai_pdf.src.js
+# 打包器输出（dist/ 下的发布包要保留）
+/ai_pdf.js
+/ai_pdf.src.js
+lib/ai_pdf.js
 
 # 本地测试
 /_t.*

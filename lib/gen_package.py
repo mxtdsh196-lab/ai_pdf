@@ -718,7 +718,7 @@ js = (JS.replace('__META__', json.dumps(meta, ensure_ascii=False, indent=2))
  .replace('__LIBS__', LIBS_B64))
 
 open(OUT, 'w', encoding='utf-8').write(js)
-print('written', OUT, len(js), 'bytes')
+print('written', OUT, os.path.getsize(OUT), 'bytes')
 print('meta tools', len(meta['tools']))
 
 # ---- 真源指纹：方便和 runtime 比对，下次「改了不生效」一眼看出 ----
