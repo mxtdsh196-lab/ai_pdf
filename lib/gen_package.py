@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #生成 ai_pdf v2（Typst引擎）沙盒包
-import base64, hashlib, json, os
+import base64, hashlib, io, json, os
 
 # ============================================================
 # ai_pdf 唯一打包入口（真源 = .typst_test/lib）
 # 别在别处跑打包脚本：dev_package 下曾有一份 v1.0.0 weasyprint 的
 # make_package.py，误跑会让整包退回 12 个工具。已归档到 _archive_v1。
 # ============================================================
-LIB = '/sdcard/Download/.typst_test/lib'
+# LIB 默认取脚本自身所在目录：同一份打包器在开发机和开源仓库里都能跑。
+# 需要指向别处时用 AI_PDF_LIB 覆盖。
+LIB = os.environ.get('AI_PDF_LIB') or os.path.dirname(os.path.abspath(__file__))
 OUT = '/sdcard/Download/Operit/dev_package/ai_pdf/ai_pdf.js'
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
@@ -290,7 +292,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.0.0',
+ 'version': '2.0.1',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('【AI生成 PDF·做PDF就用本包】Markdown一步转中文精排 PDF。真圆角卡片、渐变表头、胶囊徽章、KPI数据卡、进度条、评分、横条图、时间线、步骤、定义表、对比双栏、六色提示框、封面页、页眉页脚、水印，字号/行距/边距/字体全可调。'
@@ -299,7 +301,7 @@ meta = {
  'en': 'Use this package for ANY PDF creation. Markdown to typeset Chinese PDF with rounded cards, gradient table headers, pill badges, KPI cards, progress bars, ratings, bar charts, timelines, steps, definition lists, compare columns,6-color callouts, cover page, headers/footers, watermark; fonts/sizes/margins tunable. Typst engine (~1s per3-page doc). Includes preview, merge, split, extract, rotate, compress, images-to-PDF, text extraction.'},
  'enabledByDefault': True,
  'category': 'File',
- 'author': ['Operit'],
+ 'author': ['mxtdsh196'],
  'tools': tools,
 }
 
@@ -702,7 +704,13 @@ for _p in LIB_DIRS:
             _fp = os.path.join(_dp, _f)
             _libs[_p + '/' + os.path.relpath(_fp, _r)] = open(_fp, encoding='utf-8').read()
 import gzip as _gz
-LIBS_B64 = base64.b64encode(_gz.compress(json.dumps(_libs, ensure_ascii=False).encode('utf-8'), 9)).decode('ascii')
+_libs_raw = json.dumps(_libs, ensure_ascii=False).encode('utf-8')
+# 关键：gzip 默认写入当前时间戳（gzip 头里的 mtime），导致同样内容每次打包 byte 不同。
+# 市场发布要拿本地构件和 Release 资产比 hash，不可复现就永远对不上。mtime=0 后构建可复现。
+_gz_buf = io.BytesIO()
+with _gz.GzipFile(fileobj=_gz_buf, mode='wb', compresslevel=9, mtime=0) as _gz_fh:
+    _gz_fh.write(_libs_raw)
+LIBS_B64 = base64.b64encode(_gz_buf.getvalue()).decode('ascii')
 if not _libs:
     raise SystemExit('ERROR: typst 库为空，检查 ' + LIB_ROOT)
 print('libs embedded:', len(_libs), 'files,', len(LIBS_B64), 'b64 chars')
