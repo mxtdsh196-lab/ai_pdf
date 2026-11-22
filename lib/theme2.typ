@@ -387,10 +387,14 @@
 
 #let fx-layer(src, w, h) = place(top + left, image(src, width: w, height: h))
 
-#let fx-card(body, src, inset-v: 5mm) = block(width: 100%)[
-  #place(top + left, image(src, width: 100%))
-  #pad(x: inset-v, y: inset-v)[#body]
-]
+// 背景图高度不能写死，也不能用 100%（place 的百分比相对页面，实测会撑到 472pt）。
+// 正确做法：用 block 包住内容让它自然撑开，再用 measure 取内容高度画背景。
+#let fx-card(body, src, inset-v: 5mm) = layout(size => block(width: 100%)[
+  #let inner = pad(x: inset-v, y: inset-v, body)
+  #let h = measure(inner).height
+  #place(top + left, image(src, width: 100%, height: h, fit: "cover"))
+  #inner
+])
 
 // 泛光：outside 形状在内容外围画一圈半透明同色描边
 // strength=描边透明度(0~100，越大越淡) width=描边粗细
@@ -687,18 +691,22 @@
         align: (left + horizon, left + horizon, right + horizon),
         [#text(size: bs * 0.85)[#it.at(0)]],
         [
-          #block(
-            width: 100%, height: 11pt, radius: 2pt, fill: soft,
-            place(
-              top + left,
-              block(
-                width: (it.at(1) / maxv) * 100%,
+          // 不能用 place() 里的百分比：它相对页面而非这个格子，
+          // 实测四条 32/45/28/61 画出来一样长。改用按比例分配的 layout + 固定轨道。
+          #layout(size => {
+            let track = size.width
+            let ratio = it.at(1) / maxv
+            box(
+              width: track, height: 11pt, radius: 2pt, fill: soft,
+            )[
+              #box(
+                width: ratio * track,
                 height: 11pt,
                 radius: 2pt,
                 fill: accent,
-              ),
-            ),
-          )
+              )
+            ]
+          })
         ],
         [#text(size: bs * 0.82, weight: "bold", fill: accent)[#it.at(1)]],
       )
