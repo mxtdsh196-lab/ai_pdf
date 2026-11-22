@@ -57,7 +57,8 @@
 }
 
 // 纯 Typst 仿阴影：下方垫一层偏移浅色块，文字层不丢
-#let shadowed(body, rad: 8pt, depth: 2.5pt, tint: luma(214)) = {
+// depth=偏移量 rad=圆角 tint=阴影色 spread=右下额外外扩
+#let shadowed(body, rad: 8pt, depth: 2.5pt, tint: luma(214), spread: 1.5pt) = {
   // 做法：用一个 block 自身画「外扩一圈的浅色底」，再用负 inset 把内容压回内部。
   // 全程不依赖 height: 100%（那在流式布局里会撑满可用高度，灰块会盖住整页）。
   block(
@@ -65,7 +66,7 @@
     radius: rad,
     fill: tint,
     inset: (x: 0pt, y: 0pt),
-    outset: (bottom: depth, right: 1.5pt, top: 0pt, left: 0pt),
+    outset: (bottom: depth, right: spread, top: 0pt, left: 0pt),
   )[#body]
 }
 
@@ -119,7 +120,7 @@
 }
 
 // FAQ
-#let faq(items) = block(width: 100%)[
+#let faq(items) = block(width: 100%, above: 8pt, below: 10pt)[
   #for (i, (q, a)) in items.enumerate() [
     #block(width: 100%, inset: (left: 4mm), stroke: (left: 2.5pt + accent))[
       #block(width: 100%, text(font: hf, size: 10.5pt, weight: "bold", fill: ink)[#q])
@@ -391,28 +392,40 @@
   #pad(x: inset-v, y: inset-v)[#body]
 ]
 
-#let fx-glow(body, color: "primary", inset-v: 5mm, rad: 6, tint: none) = {
-  // 泛光：outside 形状在内容外围画一圈半透明同色描边
+// 泛光：outside 形状在内容外围画一圈半透明同色描边
+// strength=描边透明度(0~100，越大越淡) width=描边粗细
+#let fx-glow(body, color: "primary", inset-v: 5mm, rad: 6, tint: none,
+             strength: 82, width: 2pt) = {
+  // transparentize 要 ratio 不能给整数：传 strength: 95 会报 expected ratio
+  let s = if type(strength) == int or type(strength) == float { strength * 1% } else { strength }
+  let w = if type(width) == int or type(width) == float { width * 1pt } else { width }
   let tc = tone-color(color)
   let base = rgb("#FFFFFF")
   let rr = radius-of(rad)
   block(
     width: 100%, radius: rr, inset: inset-v,
     fill: if tint == none { soft2 } else { tint },
-    stroke: 2pt + tc.transparentize(82%),
+    stroke: w + tc.transparentize(s),
   )[#body]
 }
 
-#let fx-frost(body, rat: 6, inset-v: 5mm, tint: none) = {
-  // 磨砂玻璃：浅灰蓝半透明底（在白纸上才看得见）+ 亮边 + 左侧高光竖条
+// 磨砂玻璃：浅灰蓝半透明底（在白纸上才看得见）+ 亮边 + 左侧高光竖条
+// opacity=底色的不透明度(0~100，越大越实) light=高光竖条透明度(0~100)
+// bar=高光竖条宽度 border=边框粗细
+#let fx-frost(body, rat: 6, inset-v: 5mm, tint: none,
+              opacity: 12, light: 45, bar: 2.5pt, border: 0.9pt) = {
+  let o = if type(opacity) == int or type(opacity) == float { opacity * 1% } else { opacity }
+  let l = if type(light) == int or type(light) == float { light * 1% } else { light }
+  let bw = if type(bar) == int or type(bar) == float { bar * 1pt } else { bar }
+  let bd = if type(border) == int or type(border) == float { border * 1pt } else { border }
   let base = if tint == none { rgb("#EEF3FA") } else { tint }
   block(
     width: 100%, radius: radius-of(rat), inset: inset-v,
-    fill: base.transparentize(12%),
-    stroke: 0.9pt + rgb("#FFFFFF"),
+    fill: base.transparentize(o),
+    stroke: bd + rgb("#FFFFFF"),
   )[
     #place(top + left, dx: 0pt, dy: 0pt,
-      box(width: 2.5pt, height: 100%, fill: rgb("#FFFFFF").transparentize(45%)))
+      box(width: bw, fill: rgb("#FFFFFF").transparentize(l)))
     #body
   ]
 }
@@ -457,6 +470,7 @@
 // 证书
 #let cert-sheet(name: "", title: "荣誉证书", body: "", org: "", date: "", serial: "") = {
   block(width: 100%, radius: 3pt, inset: (x: 14mm, y: 12mm),
+    above: 10pt, below: 12pt,
     stroke: 2.2pt + accent, fill: rgb("#FFFDF8"))[
     #block(width: 100%, radius: 2pt, inset: (x: 10mm, y: 9mm), stroke: 0.6pt + accent.transparentize(60%))[
       #align(center)[
@@ -484,7 +498,7 @@
 }
 
 // 简历时间线（左时间右内容）
-#let resume-timeline(items) = block(width: 100%)[
+#let resume-timeline(items) = block(width: 100%, above: 8pt, below: 12pt)[
   #for (i, (when, what, desc)) in items.enumerate() [
     #grid(columns: (32mm, 1fr), gutter: 4mm,
       block(width: 100%, inset: (top: 1.2mm), align(right)[
@@ -503,7 +517,7 @@
 ]
 
 // 技能标签组
-#let skill-tags(items) = block(width: 100%)[
+#let skill-tags(items) = block(width: 100%, above: 8pt, below: 10pt)[
   #for (i, s) in items.enumerate() [
     #box(radius: 999pt, fill: soft, inset: (x: 3.2mm, y: 1.4mm),
       text(size: 9pt, fill: accent, weight: "bold")[#s])
@@ -512,7 +526,7 @@
 ]
 
 // 菜单菜品行（名称 …… 价格）
-#let menu-list(items) = block(width: 100%)[
+#let menu-list(items) = block(width: 100%, above: 8pt, below: 10pt)[
   #for (i, (nm, pr, note)) in items.enumerate() [
     #grid(columns: (1fr, auto), gutter: 2mm,
       block(width: 100%)[
@@ -529,7 +543,7 @@
 
 // 海报主视觉块
 #let poster(hero: "", sub: "", when: "", where: "", note: "") = {
-  block(width: 100%, radius: 4pt, inset: (x: 12mm, y: 10mm),
+  block(width: 100%, radius: 4pt, inset: (x: 12mm, y: 10mm), above: 10pt, below: 12pt,
     fill: gradient.linear(accent, accent2, angle: 135deg))[
     #align(center)[
       #block(width: 100%, text(font: hf, size: 26pt, weight: "bold", fill: rgb("#FFFFFF"))[#hero])
@@ -544,7 +558,8 @@
   ]
 }
 
-#let card(title, body, style: "flat", rad: 4, tone: "primary") = {
+#let card(title, body, style: "flat", rad: 4, tone: "primary",
+         sh-depth: 2.5pt, sh-spread: 1.5pt, sh-tint: luma(214)) = {
   let cs = card-style(style: style, tone: tone, rad: rad, base-fill: rgb("#FFFFFF"))
   let inner = block(
     width: 100%, radius: cs.at(2), fill: cs.at(0), stroke: cs.at(1),
@@ -557,14 +572,18 @@
     #set text(size: bs * 0.9)
     #body
   ]
-  if style == "shadow" { shadowed(rad: cs.at(2), depth: 2.5pt)[#inner] } else { inner }
+  if style == "shadow" {
+    shadowed(rad: cs.at(2), depth: sh-depth, spread: sh-spread, tint: sh-tint)[#inner]
+  } else { inner }
 }
-
-#let cardgrid(items, cols: 2, style: "flat", rad: 4, tone: "primary") = {
+#let cardgrid(items, cols: 2, style: "flat", rad: 4, tone: "primary",
+              sh-depth: 2.5pt, sh-spread: 1.5pt, sh-tint: luma(214)) = {
   if items.len() == 0 { return }
   grid(
     columns: (1fr,) * cols, gutter: 8pt,
-    ..items.map(it => card(it.at(0), it.at(1), style: style, rad: rad, tone: tone)),
+    ..items.map(it => card(it.at(0), it.at(1),
+      style: style, rad: rad, tone: tone,
+      sh-depth: sh-depth, sh-spread: sh-spread, sh-tint: sh-tint)),
   )
 }
 
@@ -917,7 +936,8 @@
 }
 // ---- 2. 章节分隔页 ----
 #let slide-section(num, title, note: none) = {
-  pagebreak(weak: true)
+  // 这里不能写 pagebreak：slide 主题下每个 # 一级标题已经强制分页了，
+  // 再加一次会把标题留在上面一页、渐变页另起一页（pdf_lint 实测报空白页）。
   place(top + left, dx: -15mm, dy: 0pt,
     block(width: _sl-w, height: _sl-h, fill: gradient.linear(accent, accent2, angle: 135deg)))
   place(center + horizon, dx: 0pt, dy: -8mm, block[
