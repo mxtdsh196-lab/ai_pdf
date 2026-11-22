@@ -1,0 +1,7 @@
+[package]
+name = "basho"
+version = "0.1.0"
+entrypoint = "lib.typ"
+authors = ["KoyaTofu42"]
+license = "MIT"
+description = "Vertical Japanese typesetting"

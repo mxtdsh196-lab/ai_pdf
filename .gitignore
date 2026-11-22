@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# 构建产物
+*.pdf
+*.png
+*.svg
+!examples/*.pdf
+
+# 打包器输出
+ai_pdf.js
+ai_pdf.src.js
+
+# 本地测试
+/_t.*
+/tmp/
+.ai_pdf_runtime/
+.ai_pdf_preview/
+
+# 字体不随仓库分发
+fonts/
+lib/fonts/
