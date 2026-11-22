@@ -429,7 +429,7 @@
 // layout 的 sz.height 是可用高度（也错），只有 measure(inner, width:) 是对的。
 #let fx-frost(body, rat: 6, inset-v: 5mm, tint: none,
               opacity: 55, light: 30, bar: 2.5pt, border: 0.9pt,
-              grain: 1.8, grain-a: 38) = {
+              grain: 1.8, grain-a: 38, bg: none) = {
   let o = if type(opacity) == int or type(opacity) == float { opacity * 1% } else { opacity }
   let l = if type(light) == int or type(light) == float { light * 1% } else { light }
   let bw = if type(bar) == int or type(bar) == float { bar * 1pt } else { bar }
@@ -441,7 +441,9 @@
   let base = if tint == none { rgb("#DCE7F5") } else { tint }
   let rad = radius-of(rat)
   let inner = pad(x: inset-v, y: inset-v, body)
-  block(
+  // bg: 传入背景图路径（渐变/照片），磨砂卡才会真的\"透\"出后面的内容。
+  // 磨砂玻璃在白纸上是看不出效果的 —— 它必须压在东西上面。
+  let card = block(
     width: 100%, radius: rad, inset: 0pt,
     fill: base.transparentize(o),
     stroke: bd + rgb("#FFFFFF"),
@@ -461,6 +463,18 @@
       fill: rgb("#FFFFFF").transparentize(70%)))
     #inner
   ]
+  if bg == none {
+    card
+  } else {
+    // 有背景时不能把 card 当 place 的内容（place 拿不到 block 的尺寸会塌掉）。
+    // 改法：把背景图塞进 card 内部当底层，card 自己撑高。
+    block(width: 100%, radius: rad, clip: true)[
+      #layout(sz => [
+        #place(top + left, image(bg, width: 100%, height: 100%, fit: "cover"))
+        #card
+      ])
+    ]
+  }
 }
 
 #let fx-curve(src, w: 100%) = block(width: 100%, above: 6pt, below: 6pt)[
