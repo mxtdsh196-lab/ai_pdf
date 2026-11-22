@@ -319,6 +319,58 @@ def anomalies(p, tol=1.0):
         if '\ufffd' in t['text']:
             out.append(('tofu', t['rect'], '文字含替换符，字体缺字形：%r' % t['text'][:30]))
 
+    # 2.5) 图像压字：fx gradient / noise / 二维码等会以 image 形式插入，
+    #      它们不在 get_drawings() 里（在 get_image_info()），原来完全没查，
+    #      导致「渐变图高 177pt 压住下一个标题」这种严重重叠报 0 条。
+    try:
+        _raw_imgs = [pymupdf.Rect(i['bbox']) for i in p.get_image_info()]
+    except Exception:
+        _raw_imgs = []
+    # PyMuPDF 对同一张图会重复返回多条（实测一张图报 4 次），先按几何去重，
+    # 否则图像两两比对会变成 N×N 的重复噪音，把真正的 image_over_text 淹掉。
+    imgs = []
+    for _r in _raw_imgs:
+        if not any(abs(_r.x0 - x.x0) < 0.5 and abs(_r.y0 - x.y0) < 0.5
+                   and abs(_r.width - x.width) < 0.5 and abs(_r.height - x.height) < 0.5
+                   for x in imgs):
+            imgs.append(_r)
+    for ir in imgs:
+        for t in texts:
+            tr = t['rect']
+            ox = min(tr.x1, ir.x1) - max(tr.x0, ir.x0)
+            oy = min(tr.y1, ir.y1) - max(tr.y0, ir.y0)
+            if not (ox > 2.0 and oy > 2.0):
+                continue
+            inside = (tr.x0 >= ir.x0 - 1 and tr.x1 <= ir.x1 + 1
+                      and tr.y0 >= ir.y0 - 1 and tr.y1 <= ir.y1 + 1)
+            if inside:
+                # 完全在图内，可能是「fx-card 正文」（设计如此）也可能是「被压住的后续标题」。
+                # 判据：这张图是否被人为撑到远超常规高度。fx gradient 默认 h=220 用户单位
+                # ≈ 176pt，若超过 1.3 倍说明图片溢出自己的容器，压住了后面的内容。
+                if ir.height > 230:
+                    out.append(('image_over_text', tr,
+                                '文字被超高图像覆盖（图高 %.0fpt，疑似溢出容器）：%r'
+                                % (ir.height, t['text'][:20])))
+                continue
+            out.append(('image_over_text', tr,
+                        '图像压住文字 %.1fpt 高：%r  bbox y=%.1f~%.1f 图 y=%.1f~%.1f'
+                        % (oy, t['text'][:20], tr.y0, tr.y1, ir.y0, ir.y1)))
+
+    # 2.6) 图像互相重叠（同一区域叠了多张，多半是尺寸算错没撑开）
+    for i in range(len(imgs)):
+        for j in range(i + 1, len(imgs)):
+            a, b = imgs[i], imgs[j]
+            ox = min(a.x1, b.x1) - max(a.x0, b.x0)
+            oy = min(a.y1, b.y1) - max(a.y0, b.y0)
+            if ox > 4.0 and oy > 4.0:
+                # 同位置同尺寸的重复条目（PyMuPDF 有时一张图报多次）要跳过
+                if abs(a.x0 - b.x0) < 0.5 and abs(a.y0 - b.y0) < 0.5 \
+                        and abs(a.width - b.width) < 0.5 and abs(a.height - b.height) < 0.5:
+                    continue
+                out.append(('image_overlap', a,
+                            '两张图重叠 %.1f×%.1fpt  图1 y=%.1f~%.1f 图2 y=%.1f~%.1f'
+                            % (ox, oy, a.y0, a.y1, b.y0, b.y1)))
+
     # 3) 文字两两重叠
     #    只报「明显压字」，不报排版正常的相邻/叠字：
     #    - 引号、括号这类单字符 span 与正文行框相交是中文排版常态（实测 _sl3 第3页误报）
