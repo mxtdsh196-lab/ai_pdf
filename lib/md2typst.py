@@ -889,10 +889,34 @@ class R:
             # 颗粒参数：grain=点阵间距(pt)，grain-a=颗粒浓度(0~100)
             _fg = _num(("grain", "grain-size"), 1.8, 0.4, 6.0, "fx frost grain")
             _fga = _num(("grain-a", "grain-alpha", "grain-opacity"), 38, 0, 100, "fx frost grain-a")
+            # bg：磨砂必须压在内容上才看得见。支持两种写法：
+            #   bg=gradient  → 自动生成渐变背景图（配 bg-c1/bg-c2/bg-angle）
+            #   bg=/path.png → 直接用这张图
+            _bg = kvs.get("bg") or kvs.get("backdrop") or kvs.get("data-bg")
+            _bg_out = ""
+            if _bg:
+                _bgs = str(_bg).strip()
+                if _bgs.lower() in ("gradient", "grad", "1"):
+                    try:
+                        import fxgen
+                        _bc1 = (kvs.get("bg-c1") or "2547A8").lstrip("#")
+                        _bc2 = (kvs.get("bg-c2") or "BE123C").lstrip("#")
+                        _bang = _num(("bg-angle", "bg-deg"), 120, 0, 360, "fx frost bg-angle")
+                        _svgbg = fxgen.gradient_blob(600, 260, _bc1, _bc2,
+                                                     angle=int(_bang), strength=1.0)
+                        _bgpath = _mkstemp(suffix=".svg", prefix="fxbg_")
+                        open(_bgpath, "w", encoding="utf-8").write(_svgbg)
+                        _bg_out = ", bg: %s" % q(_bgpath)
+                    except Exception as _e:
+                        WARNINGS.append("fx frost 的 bg 生成失败：%s" % str(_e)[:50])
+                elif os.path.exists(_bgs):
+                    _bg_out = ", bg: %s" % q(_bgs)
+                else:
+                    WARNINGS.append("fx frost 的 bg 写了 %s，既不是 gradient 也不是存在的文件，已忽略" % _bgs[:40])
             return ("#fx-frost([%s], rat: %s, inset-v: %s, opacity: %s, light: %s, "
-                    "bar: %s, border: %s, grain: %s, grain-a: %s)"
+                    "bar: %s, border: %s, grain: %s, grain-a: %s%s)"
                     % (body_txt, rad, pad, int(_fo), int(_fl), _fb, _fbd,
-                       ("%.2f" % _fg), int(_fga)))
+                       ("%.2f" % _fg), int(_fga), _bg_out))
         # 其余属于纯装饰图层：生成 SVG 叠在下面，文字仍用 Typst
         try:
             import fxgen
