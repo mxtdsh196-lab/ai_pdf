@@ -882,12 +882,17 @@ class R:
             return "#fx-glow([%s], color: %s, inset-v: %s, rad: %s, strength: %s, width: %s)" % (
                 body_txt, q(tone), pad, rad, int(_gs), _gw)
         if kind in ("frost", "glass"):
-            _fo = _num(("opacity", "alpha", "solid"), 12, 0, 100, "fx frost opacity")
-            _fl = _num(("light", "highlight"), 45, 0, 100, "fx frost light")
+            _fo = _num(("opacity", "alpha", "solid"), 55, 0, 100, "fx frost opacity")
+            _fl = _num(("light", "highlight"), 30, 0, 100, "fx frost light")
             _fb = _len(("bar", "bar-width"), "2.5pt", 0, 0, "fx frost bar")
             _fbd = _len(("border", "bw"), "0.9pt", 0, 0, "fx frost border")
-            return ("#fx-frost([%s], rat: %s, inset-v: %s, opacity: %s, light: %s, bar: %s, border: %s)"
-                    % (body_txt, rad, pad, int(_fo), int(_fl), _fb, _fbd))
+            # 颗粒参数：grain=点阵间距(pt)，grain-a=颗粒浓度(0~100)
+            _fg = _num(("grain", "grain-size"), 1.8, 0.4, 6.0, "fx frost grain")
+            _fga = _num(("grain-a", "grain-alpha", "grain-opacity"), 38, 0, 100, "fx frost grain-a")
+            return ("#fx-frost([%s], rat: %s, inset-v: %s, opacity: %s, light: %s, "
+                    "bar: %s, border: %s, grain: %s, grain-a: %s)"
+                    % (body_txt, rad, pad, int(_fo), int(_fl), _fb, _fbd,
+                       ("%.2f" % _fg), int(_fga)))
         # 其余属于纯装饰图层：生成 SVG 叠在下面，文字仍用 Typst
         try:
             import fxgen
