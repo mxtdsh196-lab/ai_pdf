@@ -52,13 +52,21 @@ def classify(msg):
         ('unclosed delimiter', 'syntax', 'Typst语法错误；优先删除 extra_typst'),
         ('expected', 'syntax', 'Typst语法错误；优先删除 extra_typst'),
         ('not found', 'missing_resource', '文件或字体找不到；图片用绝对路径，字体用 Noto Serif CJK SC'),
+        # 参数错误之前全部落到 unknown，提示叫用户去查 extra_typst，完全误导。
+        # 这些都是调用参数写错，与 extra_typst 无关。
+        ('no valid pages', 'bad_argument', 'pages 超出页数范围：先调 pdf_info看 pages 总数，再取 1 到 总页码'),
+        ('必须是 90 的倍数', 'bad_argument', 'rotate 的 degrees 只能填 0/90/180/270（PDF 格式只支持直角旋转）'),
+        ('out of range', 'bad_argument', '参数超出取值范围，看 error原文里的允许区间'),
+        ('must be', 'bad_argument', '参数类型或取值不合法，看 error原文里的允许值'),
         ('pandoc', 'markdown', 'Markdown解析失败；检查是否有未闭合的 :::或代码块'),
         ('typst binary', 'engine', '引擎未就绪；先跑 pdf_selfcheck'),
     ]
     for k, t, h in pairs:
         if k in m:
          return (t, h)
-    return ('unknown', '看 error原文定位；若与 extra_typst有关，先删掉重试')
+    # 兜底不能引导去删 extra_typst：大多数未知错误跟它无关，
+    # 原提示把参数错误也往 extra_typst 上带，实测 rotate 45度 / pages 越界都被误导。
+    return ('unknown', '看 error原文定位；若是“Unknown component/unknown variable”才需查组件名或 extra_typst')
 
 
 def err(msg, **kw):
@@ -425,6 +433,12 @@ def cmd_build(a):
             os.unlink(tmp)
         except Exception:
             pass
+        # md2typst 生成的 SVG/PNG 临时文件必须活到 typst 编译结束，
+        # 只能在这里统一清理，否则每次构建都往 /tmp 漏一批。
+        try:
+            md2typst.flush_tmp()
+        except Exception:
+            pass
     if r.returncode !=0:
         err('typst compile failed:' + chr(10) + (r.stderr or r.stdout or '')[:1800])
     if not os.path.exists(outpath) or os.path.getsize(outpath) ==0:
@@ -483,8 +497,13 @@ def cmd_info(a):
     wm, hm = round(w /72 *25.4,1), round(h /72 *25.4,1)
     meta = {k: v for k, v in (doc.metadata or {}).items() if v}
     n = doc.page_count
+    # 是否加密：gs / 部分工具无法处理加密 PDF，提前把信号给出去
+    try:
+        enc = bool(doc.is_encrypted)
+    except Exception:
+        enc = False
     doc.close()
-    out(pages=n, size_pt=[round(w,1), round(h,1)], size_mm={'width_mm': wm, 'height_mm': hm}, orientation='portrait' if wm < hm else 'landscape', file_size=os.path.getsize(pdf), metadata=meta)
+    out(pages=n, size_pt=[round(w,1), round(h,1)], size_mm={'width_mm': wm, 'height_mm': hm}, orientation='portrait' if wm < hm else 'landscape', file_size=os.path.getsize(pdf), encrypted=enc, metadata=meta)
 
 
 def cmd_merge(a):
@@ -675,6 +694,28 @@ def open_pdf(path, tool):
 def _fitz():
     import pymupdf
     return pymupdf
+
+
+def cmd_xray(a):
+    """把 PDF 解析成 AI 能直读的结构，不依赖识图。
+    布局字符画 + 可疑项 + 特效清单 + 逐元素坐标。"""
+    src = a.get('pdf') or a.get('pdf_path')
+    if not src or not os.path.exists(src):
+        err('PDF not found: %s' % src)
+    try:
+        import pdfxray
+    except Exception as e:
+        err('pdfxray 模块加载失败：%s' % e)
+    pages = a.get('pages') or '1'
+    cols = a.get('cols') or 72
+    detail = str(a.get('detail') or 'full').lower()
+    if detail not in ('full', 'art', 'brief'):
+        detail = 'full'
+    try:
+        R = pdfxray.run(src, pages, cols, detail)
+    except Exception as e:
+        err('xray 解析失败：%s' % e)
+    out(**R)
 
 
 def cmd_lint(a):
@@ -1467,7 +1508,7 @@ def cmd_fontcheck(a):
     out(font=want, found=False, suggestions=near, total=len(names), hint=msg)
 
 
-TABLE = {'lint': cmd_lint, 'fontcov': cmd_fontcov, 'matchfont': cmd_matchfont,
+TABLE = {'xray': cmd_xray, 'lint': cmd_lint, 'fontcov': cmd_fontcov, 'matchfont': cmd_matchfont,
         'fontcheck': cmd_fontcheck, 'splitoutline': cmd_splitoutline,
         'stamp': cmd_stamp, 'encrypt': cmd_encrypt, 'decrypt': cmd_decrypt,
         'optimize': cmd_optimize, 'importdoc': cmd_importdoc, 'batch': cmd_batch,
