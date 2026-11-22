@@ -151,6 +151,8 @@ def wave_divider(w=400, h=24, color='#EEF2F9', amp=8):
     """波浪分割线"""
     c = _hex(color, '#EEF2F9')
     mid = h / 2
+    # 闭合到画布底部才能形成「波浪线 + 下方填充」的分割线效果，
+    # 之前 h 传了 220（应从 24），结果整块被填成实心色块（实测）。
     d = 'M0,%.1f Q%.1f,%.1f %.1f,%.1f T%.1f,%.1f T%d,%.1f L%d,%d L0,%d Z' % (
         mid, w * 0.125, mid - amp, w * 0.25, mid, w * 0.5, mid, w, mid, w, h, h)
     svg = (
