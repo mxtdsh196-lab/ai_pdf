@@ -120,8 +120,59 @@ KNOWN_CODE_LANGS = ("python", "py", "javascript", "js", "typescript", "ts",
                     "xml", "ini", "text", "txt")
 
 
+_CHK_ON = '#box(width: 0.85em, height: 0.85em, radius: 2pt, fill: rgb("#2547A8"), align(center + horizon, text(size: 0.6em, fill: rgb("#FFFFFF"), weight: "bold")[✓]))'
+_CHK_OFF = '#box(width: 0.85em, height: 0.85em, radius: 2pt, stroke: 1pt + rgb("#B0B7C3"), fill: none)[]'
+
+# 渲染期产生的临时文件（SVG 二维码/曲线、PNG 噪点…）。
+# 这些文件必须活到 typst 编译那一刻，所以不能在生成时立刻删；
+# 统一登记，由 core.cmd_build 在编译结束后 flush_tmp() 清掉。
+# 之前完全不清理，实测一次测试轮次就漏了 87 个文件在 /tmp。
+_TMP_FILES = []
+
+
+def _mkstemp(suffix, prefix):
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix=prefix)
+    os.close(fd)
+    _TMP_FILES.append(path)
+    return path
+
+
+def flush_tmp():
+    """删除本进程登记过的临时文件。返回删掉的个数。"""
+    n = 0
+    while _TMP_FILES:
+        p = _TMP_FILES.pop()
+        try:
+            if os.path.exists(p):
+                os.unlink(p)
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
+def _len_ok(raw, lo, hi, label):
+    """长度参数校验：接受 2.5pt / 3mm / 12 这类写法，数字部分做范围钳制。
+    纯数字按 pt 处理（贴齐 Typst 的默认单位习惯）。"""
+    s = str(raw).strip()
+    import re as _r2
+    m = _r2.match(r'^([0-9]+(?:\.[0-9]+)?)\s*(pt|mm|cm|em|in)?$', s)
+    if not m:
+        WARNINGS.append("%s 写了 %s，不是合法长度，已忽略" % (label, s))
+        return None
+    val = float(m.group(1))
+    unit = m.group(2) or 'pt'
+    if val < lo or val > hi:
+        WARNINGS.append("%s=%s 超出建议范围 %s~%s%s，已钳到边界" % (label, val, lo, hi, unit))
+        val = max(lo, min(hi, val))
+    return ("%g%s" % (val, unit))
+
+
 def esc(t):
-    return "".join(_ESC.get(c, c) for c in t)
+    # 先按普通文本转义，再把占位符换成 Typst 代码
+    # （顺序反了的话，_CHK_* 里的 # 会被转义成 \#，整段变成字面量）
+    out = "".join(_ESC.get(c, c) for c in str(t))
+    return out.replace(chr(0xE000), _CHK_ON).replace(chr(0xE001), _CHK_OFF)
 
 
 def q(s):
@@ -151,7 +202,40 @@ def _quote_v(v):
     return v
 
 
+BT3 = chr(96) * 3
+
+
+def _fix_hr(md):
+    """给紧贴文字的 --- 补前后空行。
+
+    Markdown 经典坑：`文字` 换行 `---` 会被 pandoc 解析成 setext 二级标题
+    （Header），不是 HorizontalRule。于是 ::: slide-split 的 --- 分隔永远失效。
+    在交给 pandoc 之前统一补空行，让两种写法都产出 HorizontalRule。
+    """
+    lines = md.split(chr(10))
+    out = []
+    in_fence = False
+    for i, ln in enumerate(lines):
+        st = ln.strip()
+        if st.startswith(BT3):
+            in_fence = not in_fence
+            out.append(ln)
+            continue
+        # 三个及以上纯 - 才算分隔线
+        is_hr = (not in_fence) and len(st) >= 3 and st == ('-' * len(st))
+        if is_hr:
+            if out and out[-1].strip() != '':
+                out.append('')
+            out.append(st)
+            if i + 1 < len(lines) and lines[i + 1].strip() != '':
+                out.append('')
+            continue
+        out.append(ln)
+    return chr(10).join(out)
+
+
 def preprocess(md):
+    md = _fix_hr(md)
     # ============================================================
     # HTML 组件块保护。
     # PANDOC_FROM 带 fenced_divs，<div class="kpis"> 会被解析成 Div 块而不是
@@ -201,10 +285,12 @@ def preprocess(md):
 
     md = _html_guard(md)
 
-    # task list语法 -> Unicode方框（不依赖 pandoc扩展）
-    md = md.replace("- [x]", "- " + chr(0x2612) + " ")
-    md = md.replace("- [X]", "- " + chr(0x2612) + " ")
-    md = md.replace("- [ ]", "- " + chr(0x2610) + " ")
+    # task list 语法 -> 私有区占位符（PUA 字符 pandoc 不会动），
+    # 交给 theme2.typ 里的 show list.item 画方框。
+    # 不用 ☒/☐：字体缺这两个字形时会静默回落成豆腐块（实测踩过）。
+    md = md.replace("- [x]", "- " + chr(0xE000) + " ")
+    md = md.replace("- [X]", "- " + chr(0xE000) + " ")
+    md = md.replace("- [ ]", "- " + chr(0xE001) + " ")
     """把 ::: callout warn title=xx 这类简体写法转成 ::: {.callout .warn title=xx}"""
     # 先把 ```{=typst} ... ``` 原始块整体挖出来做占位，免得下面的标题正则
     # 把 "#import" 当成 Markdown 标题改成 "# import"，Typst 直接语法失败。
@@ -469,8 +555,7 @@ class R:
             import tempfile, os as _os
 
             kind = _mm2.detect_kind(code)
-            fd, path = tempfile.mkstemp(suffix='.svg', prefix='mmd_')
-            _os.close(fd)
+            path = _mkstemp(suffix='.svg', prefix='mmd_')
 
             if kind == 'sequence':
                 r = _mm2.render_sequence(code)
@@ -631,8 +716,12 @@ class R:
         return None if all(x == "left" for x in per) else per
 
     # ============ 组件 ============
-    def _qrcode(self, blocks):
-        """二维码。数据行：内容|说明（说明可省）"""
+    def _qrcode(self, blocks, cls=None, kvs=None):
+        """二维码。数据行：内容|说明（说明可省）
+
+        也支持同行写法：::: qrcode 内容|说明
+        """
+        kvs = kvs or {}
         rows = []
         for k, payload, _lv in self._lines(blocks or []):
             if k != "line":
@@ -640,8 +729,13 @@ class R:
             txt = self._text(payload).strip()
             if txt:
                 rows.append(txt)
+        # 同行写法：把 div 头部的文字当作首行数据
         if not rows:
-            WARNINGS.append("qrcode 里没有内容，无法生成二维码")
+            head_txt = self._head_text(cls or [], kvs, skip=1)
+            if head_txt:
+                rows.append(head_txt)
+        if not rows:
+            WARNINGS.append("qrcode 里没有内容，无法生成二维码（写法：::: qrcode 网址|说明，或下一行写内容）")
             return ""
         head = rows[0]
         parts = [p.strip() for p in head.split("|")]
@@ -654,8 +748,7 @@ class R:
                 WARNINGS.append("qrcode 内容过长，无法生成（上限约 200 字节）")
                 return ""
             png, dim, ver = r
-            fd, path = tempfile.mkstemp(suffix=".png", prefix="qr_")
-            os.close(fd)
+            path = _mkstemp(suffix=".png", prefix="qr_")
             open(path, "wb").write(png)
             opt = "" if not caption else ", caption: [%s]" % esc(caption)
             return "#qrcode(%s, size: 30mm%s)" % (q(path), opt)
@@ -740,10 +833,61 @@ class R:
         pad = kvs.get("padding") or kvs.get("pad") or "5mm"
         rad = kvs.get("radius") or "6"
         tone = kvs.get("tone") or "primary"
+
+        # ---- 特效程度：全部可调，带范围钳制 ----
+        # 之前全都写死在 theme2.typ 里，AI 没有任何手段改强度。
+        # 这里统一解析 + 钳制，越界给 warning 而不是静默失败。
+        def _num(keys, default, lo, hi, label):
+            raw = None
+            for k in keys:
+                v = kvs.get(k) or kvs.get("data-" + k)
+                if v is not None and str(v).strip() != "":
+                    raw = str(v).strip()
+                    break
+            if raw is None:
+                return default
+            try:
+                val = float(raw)
+            except Exception:
+                WARNINGS.append("%s 写了 %s，不是数字，已用默认 %s" % (label, raw, default))
+                return default
+            if val < lo or val > hi:
+                WARNINGS.append("%s=%s 超出范围 %s~%s，已钳到边界" % (label, val, lo, hi))
+                val = max(lo, min(hi, val))
+            return val
+
+        def _len(keys, default, lo, hi, label):
+            """长度参数：允许带单位（2.5pt / 3mm），数字部分按 lo/hi 钳制。"""
+            raw = None
+            for k in keys:
+                v = kvs.get(k) or kvs.get("data-" + k)
+                if v is not None and str(v).strip() != "":
+                    raw = str(v).strip()
+                    break
+            if raw is None:
+                return default
+            if hi > lo:
+                # 有范围要求时走统一校验；lo/hi 传 0/0 表示不限
+                got = _len_ok(raw, lo, hi, label)
+                return got if got else default
+            import re as _r3
+            if not _r3.match(r'^[0-9]+(?:\.[0-9]+)?\s*(pt|mm|cm|em|in)?$', raw):
+                WARNINGS.append("%s 写了 %s，不是合法长度，已用默认 %s" % (label, raw, default))
+                return default
+            return raw
+
         if kind == "glow":
-            return "#fx-glow([%s], color: %s, inset-v: %s, rad: %s)" % (body_txt, q(tone), pad, rad)
+            _gs = _num(("strength", "glow", "fade"), 82, 0, 100, "fx glow strength")
+            _gw = _len(("width", "w-stroke", "line"), "2pt", 0, 0, "fx glow width")
+            return "#fx-glow([%s], color: %s, inset-v: %s, rad: %s, strength: %s, width: %s)" % (
+                body_txt, q(tone), pad, rad, int(_gs), _gw)
         if kind in ("frost", "glass"):
-            return "#fx-frost([%s], rat: %s, inset-v: %s)" % (body_txt, rad, pad)
+            _fo = _num(("opacity", "alpha", "solid"), 12, 0, 100, "fx frost opacity")
+            _fl = _num(("light", "highlight"), 45, 0, 100, "fx frost light")
+            _fb = _len(("bar", "bar-width"), "2.5pt", 0, 0, "fx frost bar")
+            _fbd = _len(("border", "bw"), "0.9pt", 0, 0, "fx frost border")
+            return ("#fx-frost([%s], rat: %s, inset-v: %s, opacity: %s, light: %s, bar: %s, border: %s)"
+                    % (body_txt, rad, pad, int(_fo), int(_fl), _fb, _fbd))
         # 其余属于纯装饰图层：生成 SVG 叠在下面，文字仍用 Typst
         try:
             import fxgen
@@ -753,21 +897,42 @@ class R:
             c2 = kvs.get("c2")
             if kind == "noise":
                 # 用栅格 PNG：SVG 的 feTurbulence 会膨胀成海量 path，实测 37KB 涨到 3.4MB
-                png = fxgen.noise_png(w * 2, h * 2)
+                # alpha=颗粒浓度(0~1) w/h=像素尺寸
+                _na = _num(("alpha", "density", "amount"), 0.12, 0.0, 1.0, "fx noise alpha")
+                # 兼容写成百分数 alpha=30 的情形
+                if _na > 1.0:
+                    _na = _na / 100.0
+                png = fxgen.noise_png(int(w * 2), int(h * 2), alpha=_na)
                 if png:
-                    fd, path = tempfile.mkstemp(suffix=".png", prefix="fxn_")
-                    os.close(fd)
+                    path = _mkstemp(suffix=".png", prefix="fxn_")
                     open(path, "wb").write(png)
                     if body_txt:
                         return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
                     return "#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path)
                 svg = fxgen.noise_texture(w, h)
             elif kind == "gradient":
+                # c1/c2=两端颜色 angle=光斑角度(0~360) strength=浓度(0~1)
                 a = (col.lstrip(chr(35)) if col else None)
                 b = (c2.lstrip(chr(35)) if c2 else None)
-                svg = fxgen.gradient_blob(w, h, a or "2547A8", b or "7C3AED")
+                _ang = _num(("angle", "deg"), 135, 0, 360, "fx gradient angle")
+                _gst = _num(("strength", "density"), 0.85, 0.0, 1.0, "fx gradient strength")
+                if _gst > 1.0:
+                    _gst = _gst / 100.0
+                svg = fxgen.gradient_blob(int(w), int(h), a or "2547A8", b or "7C3AED",
+                                          angle=int(_ang), strength=_gst)
             elif kind == "wave":
-                svg = fxgen.wave_divider(w, h)
+                # amp=波幅 color=颜色
+                _amp = _num(("amp", "amplitude"), 8, 1, 40, "fx wave amp")
+                _wc = kvs.get("color") or kvs.get("c1")
+                _wc = ("#" + _wc.lstrip("#")) if _wc else None
+                try:
+                    if _wc:
+                        svg = fxgen.wave_divider(int(w), int(h), color=_wc, amp=int(_amp))
+                    else:
+                        svg = fxgen.wave_divider(int(w), int(h), amp=int(_amp))
+                except TypeError:
+                    svg = fxgen.wave_divider(int(w), int(h))
+                    WARNINGS.append("fx wave 的 amp/color 未被支持（fxgen 版本旧），已用默认")
             else:
                 WARNINGS.append("fx 的 kind 写了 %s，支持 frost/glow/noise/gradient/wave，已按 grid 跳过" % kind)
                 return body_txt
@@ -792,8 +957,11 @@ class R:
             if t and not path_d:
                 path_d = t
         if not path_d:
+            # 同行写法：::: curve M10,70 C60,20 140,95 270,30
+            path_d = self._head_text(cls or [], kvs, skip=1)
+        if not path_d:
             path_d = "M10,70 C60,20 140,95 270,30"
-            WARNINGS.append("curve 没写 path，已用默认曲线。写法：M10,70 C60,20 140,95 270,30")
+            WARNINGS.append("curve 没写 path，已用默认曲线。写法：::: curve M10,70 C60,20 140,95 270,30")
         if not (path_d.startswith(chr(77)) or path_d.startswith(chr(109))):
             WARNINGS.append("curve 的 path 必须以 M 开头（SVG path 语法），已加前缀")
             path_d = "M" + path_d
@@ -817,12 +985,26 @@ class R:
         try:
             if not content.lstrip().startswith("<"):
                 return None
-            fd, path = tempfile.mkstemp(suffix=suffix, prefix="fx_")
-            os.close(fd)
+            path = _mkstemp(suffix=suffix, prefix="fx_")
             open(path, "w", encoding="utf-8").write(content)
             return path
         except Exception:
             return None
+
+    def _head_text(self, cls, kvs, skip=1):
+        """取 fenced div 头部与组件名同一行的文字。
+
+        pandoc 会把 `::: capsule 标题` 里的标题解析成 data-title 属性，
+        而不是 inner 内容。cls 里也可能剩几个词（含空格的会被拆开）。
+        skip: cls 前几个是组件名/变体，跳过。
+        """
+        t = kvs.get("title") or kvs.get("data-title")
+        if t:
+            return str(t).strip()
+        rest = [c for c in (cls or [])[skip:] if c]
+        if rest:
+            return " ".join(rest).strip()
+        return ""
 
     def _rows_of(self, blocks):
         """把组件内容拆成 [(cells...)]，每行用 | 分隔"""
@@ -941,7 +1123,6 @@ class R:
             if k in kv:
                 opts.append("%s: [%s]" % (k, esc(kv[k])))
         return "#poster(%s)" % ", ".join(opts)
-
     def _slide(self, name, cls, kvs, inner):
         """幻灯片版式。数据行用 | 分隔字段。"""
         rows = []
@@ -951,6 +1132,14 @@ class R:
             txt = self._text(payload).strip()
             if txt:
                 rows.append(txt)
+        # 头部同行文字：`::: slide-cover 标题|副标题` 这种写法里，pandoc 会把
+        # 同行文字塞进 data-* 属性而不是 inner，只读 rows 会得到全空。
+        # 整行作为一个 row 补进去，由下面的 cell() 按 | 拆字段（不能在这里先拆，
+        # 否则 cover/stats/cols 会各自只拿到第一段，实测字段全错位）。
+        _head = self._head_text(cls, kvs, skip=1)
+        if _head and not rows and str(_head).strip():
+            rows = [str(_head).strip()]
+
         if name.startswith("slide-"):
             kind = name[6:]
         else:
@@ -1083,14 +1272,23 @@ class R:
                 else:
                     cur.append(b)
             groups.append(cur)
+            # 头部同行文字 = 左栏第一段（pandoc 不把同行文字放进 inner）。
+            # 实测 `::: slide-split 左栏 --- 右栏` 之前左栏整个消失。
+            _h = self._head_text(cls, kvs, skip=1)
+            _head_txt = str(_h).strip() if _h else ""
             if len(groups) < 2:
                 WARNINGS.append("slide-split 需要两栏内容，用一行 --- 分隔；当前只有 1 栏")
                 groups = [cur, []]
             parts = []
-            for g in groups[:2]:
+            for _gi, g in enumerate(groups[:2]):
                 r = R()
                 r.render(g)
-                parts.append(r.out().strip())
+                _seg = r.out().strip()
+                if _gi == 0 and _head_txt:
+                    # 直接把转义后的裸文本拼在最前面，不再套 []：
+                    # 外面已经是 "#slide-split(([%s], ...))" 的方括号，套了会成 [[...]]
+                    _seg = "%s%s%s" % (esc(_head_txt), chr(10) * 2 if _seg else "", _seg)
+                parts.append(_seg)
             return "#slide-split(([%s], [%s]), side: %s)" % (
                 parts[0], parts[1], q(side))
 
@@ -1112,8 +1310,10 @@ class R:
         # 空组件：有 ::: xxx 但没有内容，几乎肯定是忘写数据行
         _EMPTY_OK = ("pagebreak", "toc", "no-break", "nobreak",
                      "fx", "effect", "noise", "wave")
-        if name and name not in _EMPTY_OK and not any(
-                k == "line" for k, _p, _l in self._lines(inner or [])):
+        # 头部带同行文字的组件（::: capsule 标题 / ::: qrcode 网址）不算空块
+        _has_head = bool(self._head_text(cls, kvs, skip=1))
+        if (name and name not in _EMPTY_OK and not _has_head and not any(
+                k == "line" for k, _p, _l in self._lines(inner or []))):
             WARNINGS.append("组件 ::: %s 里没有任何数据行，渲染出来会是空块" % name)
 
         # block font: ::: font-Cinzel ... :::
@@ -1181,13 +1381,16 @@ class R:
             self.o.append(self._curve(inner, cls, kvs) + chr(10) * 2)
         elif name in ("capsule", "pill"):
             body = " ".join(self.ins(pl) for k, pl, _ in self._lines(inner or []) if k == "line")
+            if not body.strip():
+                # 支持 ::: capsule 标题文字（同行写法，pandoc 会放进 data-title）
+                body = esc(self._head_text(cls, kvs, skip=1))
             tone = kvs.get("tone") or kvs.get("data-tone") or "primary"
             solid = kvs.get("solid") or kvs.get("data-solid")
             sb = "false" if (solid is not None and str(solid).lower() in ("false", "0", "no")) else "true"
             sz = kvs.get("size") or "12pt"
             self.o.append("#capsule([%s], tone: %s, solid: %s, size: %s)" % (body, q(tone), sb, sz) + chr(10) * 2)
         elif name == "qrcode":
-            self.o.append(self._qrcode(inner) + chr(10) * 2)
+            self.o.append(self._qrcode(inner, cls, kvs) + chr(10) * 2)
         elif name in ("price", "pricing"):
             self.o.append(self._price(inner) + chr(10) * 2)
         elif name in ("faq", "qa"):
@@ -1472,7 +1675,37 @@ class R:
             _st = "flat"
         _rad = str(kvs.get("radius") or kvs.get("data-radius") or "4")
         _tone = str(kvs.get("tone") or kvs.get("data-tone") or "primary").lower()
-        extra = ", style: %s, rad: %s, tone: %s" % (q(_st), _rad if _rad.isdigit() or _rad == "pill" else "4", q(_tone))
+        # radius-of() 里 "pill" 是合法取值（→999pt），但必须带引号传：
+        # 输出成 rad: pill 时 Typst 当变量名解析，报 unknown variable: pill。
+        if _rad.isdigit() or _rad in ("pill", "0", "4", "8"):
+            _rad_out = _rad if _rad.isdigit() else q(_rad)
+        else:
+            WARNINGS.append("cards 的 radius 写了 %s，只支持 0/4/8/pill，已按 4" % _rad)
+            _rad_out = "4"
+        extra = ", style: %s, rad: %s, tone: %s" % (q(_st), _rad_out, q(_tone))
+        # 阴影程度可调：sh-depth=偏移量 sh-spread=右下外扩 sh-tint=阴影色
+        if _st == "shadow":
+            _sd = kvs.get("sh-depth") or kvs.get("shadow-depth") or kvs.get("depth")
+            _ss = kvs.get("sh-spread") or kvs.get("shadow-spread") or kvs.get("spread")
+            _stc = kvs.get("sh-tint") or kvs.get("shadow-color") or kvs.get("shade")
+            if _sd:
+                _v = _len_ok(_sd, 0.5, 12, "sh-depth")
+                if _v:
+                    extra += ", sh-depth: %s" % _v
+            if _ss:
+                _v = _len_ok(_ss, 0.0, 8, "sh-spread")
+                if _v:
+                    extra += ", sh-spread: %s" % _v
+            if _stc:
+                _hexc = str(_stc).strip().lstrip("#")
+                if len(_hexc) == 6 and all(c in "0123456789abcdefABCDEF" for c in _hexc):
+                    extra += ", sh-tint: rgb(\"#%s\")" % _hexc.upper()
+                elif str(_stc).strip() in ("light", "mid", "dark"):
+                    _m = {"light": "luma(232)", "mid": "luma(214)", "dark": "luma(180)"}
+                    extra += ", sh-tint: %s" % _m[str(_stc).strip()]
+                else:
+                    WARNINGS.append("cards 的 shadow 色写了 %s，只支持 6 位十六进制或 light/mid/dark，已用默认"
+                                    % _stc)
         return "#cardgrid((\n  %s,\n), cols: %s%s)" % (",\n  ".join(items), cols, extra)
 
     def _wrap(self, blocks, cls, kvs=None):
