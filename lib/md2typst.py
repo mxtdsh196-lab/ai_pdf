@@ -889,8 +889,8 @@ class R:
             # 颗粒参数：grain=点阵间距(pt)，grain-a=颗粒浓度(0~100)
             # 默认 4.0 而不是 1.8：1.8pt 的颗粒在 100~150dpi 下只有 2~3px，糊成一片，
             # 实测用户直接说「磨砂还是没有」。4.0 才能在正常查看尺寸下看出砂面。
-            _fg = _num(("grain", "grain-size"), 4.0, 1.5, 10.0, "fx frost grain")
-            _fga = _num(("grain-a", "grain-alpha", "grain-opacity"), 42, 0, 100, "fx frost grain-a")
+            _fg = _num(("grain", "grain-size"), 0, 0, 10.0, "fx frost grain")
+            _fga = _num(("grain-a", "grain-alpha", "grain-opacity"), 0, 0, 100, "fx frost grain-a")
             # bg：磨砂必须压在内容上才看得见。支持两种写法：
             #   bg=gradient  → 自动生成渐变背景图（配 bg-c1/bg-c2/bg-angle）
             #   bg=/path.png → 直接用这张图
