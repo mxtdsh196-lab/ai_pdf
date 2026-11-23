@@ -429,7 +429,7 @@
 // layout 的 sz.height 是可用高度（也错），只有 measure(inner, width:) 是对的。
 #let fx-frost(body, rat: 6, inset-v: 5mm, tint: none,
               opacity: 55, light: 30, bar: 2.5pt, border: 0.9pt,
-              grain: 1.8, grain-a: 38, bg: none) = {
+              grain: 0, grain-a: 0, bg: none) = {
   let o = if type(opacity) == int or type(opacity) == float { opacity * 1% } else { opacity }
   let l = if type(light) == int or type(light) == float { light * 1% } else { light }
   let bw = if type(bar) == int or type(bar) == float { bar * 1pt } else { bar }
@@ -459,7 +459,9 @@
   // 有 bg 时底色必须极淡：底色是「雾」，压在背景上面。
   // 实测 opacity=22 的 #DCE7F5 仍会把背景冲成灰紫（用户指出“颜色不对”）。
   // 所以 bg 分支下用白色雾（不带蓝调）且不透明度减半，让背景色彩透出来。
-  let fog = if bg == none { base.transparentize(o) } else { rgb("#FFFFFF").transparentize(100% - o * 0.55) }
+  // 标准玻璃拟态底色：rgba(255,255,255,0.2)，即 80% 透明。
+  // opacity 参数控制玻璃层的不透明度：opacity=20 → 白色 20% 实、80% 透。
+  let fog = if bg == none { base.transparentize(o) } else { rgb("#FFFFFF").transparentize(100% - o) }
   let card = block(
     width: 100%, radius: rad, inset: 0pt,
     fill: fog,
@@ -468,10 +470,15 @@
   )[
     // 颗粒层：place 的 height: 100% 在 block[...] 内是相对这个 block（不是页面），
     // 所以能正好铺满。前提是 block 的 inset 必须为 0，否则内部尺寸算不对。
-    #place(top + left, box(width: 100%, height: 100%,
-      fill: tiling(size: (gs, gs), dot(dk, 30%))))
-    #place(top + left, box(width: 100%, height: 100%,
-      fill: tiling(size: (gs, gs), dot(rgb("#FFFFFF"), ga, off: gs * 0.5))))
+    // 颗粒默认不画（grain: 0）。真实磨砂玻璃在宏观上是均匀的乳白层，
+    // 像素点的噪点是「纱窗/网点纸」观感 —— 用户明确指出那不是磨砂。
+    // PS 那种磨砂 = 白色半透明 + 背景模糊，没有颗粒。要纹理再显式传 grain=。
+    #if gs > 0pt [
+      #place(top + left, box(width: 100%, height: 100%,
+        fill: tiling(size: (gs, gs), dot(dk, 30%))))
+      #place(top + left, box(width: 100%, height: 100%,
+        fill: tiling(size: (gs, gs), dot(rgb("#FFFFFF"), ga, off: gs * 0.5))))
+    ]
     // 顶部镜面高光
     #place(top + left, block(width: 100%, height: bw,
       fill: rgb("#FFFFFF").transparentize(l)))
