@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """markdown -> typst（pandoc JSON AST + 组件 fenced div）"""
-import subprocess, shutil, json, re, os, sys, tempfile
+import subprocess, shutil, json, re, os, sys, tempfile, base64
 
 PANDOC = shutil.which("pandoc") or "/usr/bin/pandoc"
 
@@ -1062,23 +1062,10 @@ class R:
         return out
 
     def _collage(self, blocks, cls, kvs=None):
-        """拼贴版面。每行一个图层，格式：类型|内容|位置|尺寸|其他
-
-        图层类型：
-          img   路径 | x,y   | 宽[,高]  | fit=cover  rot=-4  r=2  bw=0.4  bc=FFFFFF
-          text  内容 | x,y   | 宽       | size=20 weight=bold color=1A1A1A italic=true leading=1.3
-          block 内容 | x,y   | 宽[,高]  | fill=33507D alpha=8 color=FFFFFF pad=4 r=3
-          dot   颜色 | x,y   | 半径     | alpha=100
-          line  颜色 | x1,y1 | x2,y2    | w=0.5 alpha=100
-          curve 路径 | x,y   | 宽,高    | color=BE123C w=2
-          vtext 内容 | x,y   | 宽[,高]  | size=11 gap=3 color=1A1A1A
-
-        画布尺寸由 kvs 的 w/h 指定（mm），bg=颜色。
-        """
         kvs = kvs or {}
         rows = self._rows_of(blocks)
         if not rows:
-            WARNINGS.append("collage 没有图层。每行格式：类型|内容|位置|尺寸")
+            WARNINGS.append("collage 没有图层")
             return ""
 
         def _f(v, d=None):
@@ -1088,7 +1075,6 @@ class R:
                 return d
 
         def _mm(v, d=0.0):
-            """'40mm' / '40' / 40 → pt 数值（Typst 用 mm 单位，这里返回原始 mm 数）"""
             s = str(v).strip().lower()
             for u in ("mm", "cm", "pt", "in"):
                 if s.endswith(u):
@@ -1109,6 +1095,33 @@ class R:
                 return None
             return (_mm(parts[0], 0.0), _mm(parts[1], 0.0))
 
+        def _size2(v, d1, d2):
+            parts = str(v).replace("，", ",").split(",")
+            w = _mm(parts[0], d1) if str(parts[0]).strip() else d1
+            h = d2
+            if len(parts) > 1 and str(parts[1]).strip():
+                h = _mm(parts[1], d2)
+            return w, h
+
+        def _color(c, default=None):
+            s = str(c or "").strip().lstrip("#")
+            if len(s) == 6 and all(x in "0123456789abcdefABCDEF" for x in s):
+                return 'rgb("#%s")' % s.upper()
+            if default:
+                return 'rgb("#%s")' % default
+            return "none"
+
+        def _kv(extra, key):
+            import re as _re
+            for part in extra:
+                p = str(part).strip()
+                if "=" not in p:
+                    continue
+                for mt in _re.finditer(r"([A-Za-z][\w-]*)\s*=\s*([^\s]+)", p):
+                    if mt.group(1).lower() == key:
+                        return mt.group(2).strip()
+            return None
+
         # 画布
         _wv = kvs.get("w") or kvs.get("width")
         _hv = kvs.get("h") or kvs.get("height")
@@ -1116,76 +1129,104 @@ class R:
         ch = _mm(_hv, 297.0) if _hv else None
         bgc = (kvs.get("bg") or "").strip().lstrip("#")
 
-        def _color(c, default=None):
-            s = str(c or "").strip().lstrip("#")
-            if len(s) == 6 and all(ch2 in "0123456789abcdefABCDEF" for ch2 in s):
-                return 'rgb("#%s")' % s.upper()
-            if default:
-                return 'rgb("#%s")' % default
-            return "none"
-
-        def _kv(extra, key):
-            """从额外参数里取 key=value。支持一段里写多个：size=22 weight=bold"""
-            import re as _re
-            for part in extra:
-                p = str(part).strip()
-                if "=" not in p:
-                    continue
-                # 按「空格 + 单词 + =」切开，这样 size=22 weight=bold 能拆成两对
-                for mt in _re.finditer(r"([A-Za-z][\w-]*)\s*=\s*([^\s]+)", p):
-                    if mt.group(1).lower() == key:
-                        return mt.group(2).strip()
-            return None
+        def _shaped_photo(src, wmm, hmm, shape="rect", rad=0.0):
+            """把照片裁成椭圆/圆角矩形再插入。返回 (路径 或 None, typst 片段)"""
+            try:
+                raw = open(src, "rb").read()
+            except Exception:
+                return None
+            b64 = base64.b64encode(raw).decode()
+            W = 600
+            H = max(60, int(W * hmm / max(0.01, wmm)))
+            mime = "image/png" if src.lower().endswith(".png") else "image/jpeg"
+            if shape == "ellipse":
+                clip = "<clipPath id='c'><ellipse cx='%d' cy='%d' rx='%d' ry='%d'/></clipPath>" % (
+                    W // 2, H // 2, W // 2 - 2, H // 2 - 2)
+                cp = " clip-path='url(#c)'"
+            elif rad and rad > 0.01:
+                rr = max(1.0, rad / max(0.01, wmm) * W)
+                clip = "<clipPath id='c'><rect x='0' y='0' width='%d' height='%d' rx='%.1f' ry='%.1f'/></clipPath>" % (
+                    W, H, rr, rr)
+                cp = " clip-path='url(#c)'"
+            else:
+                clip = ""
+                cp = ""
+            svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='%d' height='%d'>"
+                   "<defs>%s</defs>"
+                   "<image x='0' y='0' width='%d' height='%d' preserveAspectRatio='xMidYMid slice'%s "
+                   "href='data:%s;base64,%s'/></svg>") % (W, H, clip, W, H, cp, mime, b64)
+            return self._write_tmp(svg, ".svg")
 
         layers = []
         for r in rows:
-            if len(r) < 3:
-                WARNINGS.append("collage 图层字段不足，跳过：%s" % "|".join(r)[:40])
-                continue
             kind = r[0].strip().lower()
-            content = r[1] if len(r) > 1 else ""
-            pos = _xy(r[2]) if len(r) > 2 else None
-            if not pos:
-                WARNINGS.append("collage 第 %s 行的位置不是「x,y」，跳过" % kind)
+            # bgimg / mask 只要 1~2 个字段，不参与「至少 3 段」检查
+            if kind not in ("bgimg", "bg-photo", "photo-bg", "mask", "veil") and len(r) < 3:
+                WARNINGS.append("collage 图层字段不足：%s" % "|".join(r)[:40])
                 continue
-            px, py = pos
+            content = r[1] if len(r) > 1 else ""
+            pos_raw = r[2] if len(r) > 2 else ""
             size = r[3] if len(r) > 3 else ""
             extra = r[4:]
 
+            # bgimg / mask 不需要坐标
+            if kind in ("bgimg", "bg-photo", "photo-bg"):
+                src = content.strip()
+                if not os.path.exists(src):
+                    WARNINGS.append("collage 的 bgimg 不存在：%s" % src[:50])
+                    continue
+                layers.append("#place(top + left)[#box(width: 100%%, height: 100%%, "
+                              "clip: true)[#image(%s, width: 100%%, height: 100%%, fit: \"cover\")]]"
+                              % q(src))
+                continue
+            if kind in ("mask", "veil"):
+                colv = _color(content, "000000")
+                alpha = _f(size, 40.0) if str(size).strip() else 40.0
+                layers.append("#place(top + left)[#box(width: 100%%, height: 100%%, "
+                              "fill: %s.transparentize(%.1f%%))]" % (colv, alpha))
+                continue
+
+            pos = _xy(pos_raw)
+            if not pos:
+                WARNINGS.append("collage 第 %s 行位置不是 x,y" % kind)
+                continue
+            px, py = pos
             base = "#place(top + left, dx: %.3fmm, dy: %.3fmm)" % (px, py)
 
             if kind == "img":
-                if not content:
-                    WARNINGS.append("collage 的 img 没写路径")
-                    continue
                 src = content.strip()
                 if not os.path.exists(src):
                     WARNINGS.append("collage 的图片不存在：%s" % src[:50])
                     continue
-                parts = str(size).replace("，", ",").split(",")
-                wmm = _mm(parts[0], 40.0)
-                hmm = _mm(parts[1], None) if len(parts) > 1 and str(parts[1]).strip() else None
-                fitm = (_kv(extra, "fit") or "cover").strip()
-                rot = _f(_kv(extra, "rot"), 0.0)
-                rad = _mm(_kv(extra, "r"), 0.0)
-                bw = _f(_kv(extra, "bw"), 0.4)
-                bcv = _color(_kv(extra, "bc"), "FFFFFF")
-                hpart = ", height: %.3fmm, fit: %s" % (hmm, q(fitm)) if hmm else ""
-                stroke = ", stroke: %.2fpt + %s" % (bw, bcv) if bw and bw > 0 else ""
-                # 只给宽度时按原比例撑高会盖住下面图层，这里默认也按 4:3 裁，避免溢出
+                wmm, hmm = _size2(size, 40.0, None)
                 if not hmm:
                     hmm = wmm * 0.75
-                _hp = ("height: 100%%, fit: %s" % q(fitm))
-                inner = ("#block(width: %.3fmm, height: %.3fmm, radius: %.3fmm, "
-                         "clip: true%s)[#image(%s, width: 100%%, height: 100%%, "
-                         "fit: %s)]"
+                rot = _f(_kv(extra, "rot"), 0.0)
+                rad = _mm(_kv(extra, "r"), 0.0)
+                fitm = (_kv(extra, "fit") or "cover").strip()
+                bw = _f(_kv(extra, "bw"), 0.4)
+                bcv = _color(_kv(extra, "bc"), "FFFFFF")
+                stroke = ", stroke: %.2fpt + %s" % (bw, bcv) if bw and bw > 0 else ""
+                inner = ("#block(width: %.3fmm, height: %.3fmm, radius: %.3fmm, clip: true%s)["
+                         "#image(%s, width: 100%%, height: 100%%, fit: %s)]"
                          % (wmm, hmm, rad, stroke, q(src), q(fitm)))
                 if rot:
                     inner = "#rotate(%.2fdeg, origin: center, reflow: true)[%s]" % (rot, inner)
                 layers.append("%s[%s]" % (base, inner))
 
+            elif kind in ("oval", "ellipse", "arch"):
+                src = content.strip()
+                if not os.path.exists(src):
+                    WARNINGS.append("collage 的 oval 图片不存在：%s" % src[:50])
+                    continue
+                wmm, hmm = _size2(size, 50.0, None)
+                if not hmm:
+                    hmm = wmm * 1.25
+                p = _shaped_photo(src, wmm, hmm, "ellipse")
+                if p:
+                    layers.append("%s[#image(%s, width: %.3fmm)]" % (base, q(p), wmm))
+
             elif kind == "text":
-                # 第 4 段既可能是宽度（60 / 60mm），也可能是直接写了 kv（size=19）
                 _s4 = str(size).strip()
                 if _s4 and "=" in _s4:
                     extra = [_s4] + list(extra)
@@ -1198,22 +1239,22 @@ class R:
                 italic = (_kv(extra, "italic") or "").lower() in ("1", "true", "yes")
                 lh = _f(_kv(extra, "leading"), 1.4)
                 align = (_kv(extra, "align") or "left").strip()
-                wpart = ", width: %.3fmm" % wmm if wmm else ""
-                ipart = ', style: "italic"' if italic else ""
+                track = _f(_kv(extra, "track"), 0.0)
+                wpart = "width: %.3fmm, " % wmm if wmm else ""
+                ipart = ', style: "italic"' if italic else ", style: \"normal\""
+                tpart = ", tracking: %.3fem" % (track / 100.0) if track else ""
                 layers.append(
-                    "%s[#block(%s)[#set par(leading: %.2fem, justify: false)\n"
-                    "#text(size: %.2fpt, weight: %s, fill: %s, %s)[#align(%s)[%s]]]]"
-                    % (base, wpart.lstrip(", "), lh, fsize, q(weight), colv,
-                       ipart.strip(", ") or "style: \"normal\"", align, esc(content)))
+                    "%s[#block(%s)[#set par(leading: %.2fem, justify: false)%s"
+                    "#text(size: %.2fpt, weight: %s, fill: %s%s%s)[#align(%s)[%s]]]]"
+                    % (base, wpart.rstrip(", "), lh, chr(10), fsize, q(weight), colv,
+                       ipart, tpart, align, esc(content)))
 
             elif kind in ("block", "panel", "box"):
                 _s4 = str(size).strip()
                 if _s4 and "=" in _s4 and "," not in _s4:
                     extra = [_s4] + list(extra)
                     _s4 = "60"
-                parts = _s4.replace("，", ",").split(",")
-                wmm = _mm(parts[0], 60.0)
-                hmm = _mm(parts[1], None) if len(parts) > 1 and str(parts[1]).strip() else None
+                wmm, hmm = _size2(_s4, 60.0, None)
                 fillc = _color(_kv(extra, "fill"), "33507D")
                 alpha = _f(_kv(extra, "alpha"), 8.0)
                 colv = _color(_kv(extra, "color"), "FFFFFF")
@@ -1221,13 +1262,15 @@ class R:
                 rad = _mm(_kv(extra, "r"), 2.0)
                 fsize = _f(_kv(extra, "size"), 8.5)
                 weight = (_kv(extra, "weight") or "regular").strip()
+                align = (_kv(extra, "align") or "left").strip()
+                lh = _f(_kv(extra, "leading"), 1.6)
                 hpart = ", height: %.3fmm" % hmm if hmm else ""
                 layers.append(
                     "%s[#block(width: %.3fmm%s, radius: %.3fmm, inset: %.3fmm, "
-                    "fill: %s.transparentize(%.1f%%))[#text(size: %.2fpt, weight: %s, "
-                    "fill: %s)[%s]]]"
-                    % (base, wmm, hpart, rad, pad, fillc, alpha, fsize, q(weight),
-                       colv, esc(content)))
+                    "fill: %s.transparentize(%.1f%%))[#set par(leading: %.2fem)%s"
+                    "#text(size: %.2fpt, weight: %s, fill: %s)[#align(%s)[%s]]]]"
+                    % (base, wmm, hpart, rad, pad, fillc, alpha, lh, chr(10), fsize,
+                       q(weight), colv, align, esc(content)))
 
             elif kind == "dot":
                 rad = _mm(size, 2.0)
@@ -1236,70 +1279,89 @@ class R:
                 layers.append("%s[#circle(radius: %.3fmm, fill: %s.transparentize(%.1f%%))]"
                               % (base, rad, colv, 100.0 - alpha))
 
+            elif kind in ("ring", "circle-line"):
+                rad = _mm(size, 3.0)
+                colv = _color(content, "8B8070")
+                wid = _f(_kv(extra, "w"), 0.8)
+                layers.append("%s[#circle(radius: %.3fmm, stroke: %.2fpt + %s, fill: none)]"
+                              % (base, rad, wid, colv))
+
             elif kind == "line":
                 xy2 = _xy(size)
                 if not xy2:
-                    WARNINGS.append("collage 的 line 需要第二点：line|色|x1,y1|x2,y2")
+                    WARNINGS.append("collage 的 line 需要第二点")
                     continue
                 x2, y2 = xy2
                 colv = _color(content, "C9D6E5")
                 wid = _f(_kv(extra, "w"), 0.5)
                 alpha = _f(_kv(extra, "alpha"), 100.0)
-                dx2 = x2 - px
-                dy2 = y2 - py
                 layers.append("%s[#line(start: (0mm, 0mm), end: (%.3fmm, %.3fmm), "
                               "stroke: %.2fpt + %s.transparentize(%.1f%%))]"
-                              % (base, dx2, dy2, wid, colv, 100.0 - alpha))
+                              % (base, x2 - px, y2 - py, wid, colv, 100.0 - alpha))
 
             elif kind in ("curve", "arc"):
-                # 自定义曲线：content = SVG path 的 d 属性
-                parts = str(size).replace("，", ",").split(",")
-                wmm = _mm(parts[0], 60.0)
-                hmm = _mm(parts[1], 20.0) if len(parts) > 1 and str(parts[1]).strip() else 20.0
-                colv = _color(_kv(extra, "color"), "BE123C")
-                wid = _f(_kv(extra, "w"), 2.0)
-                d = content.strip()
-                if not d:
+                wmm, hmm = _size2(size, 60.0, 20.0)
+                dn = content.strip()
+                if not dn:
                     WARNINGS.append("collage 的 curve 没写路径")
                     continue
                 try:
                     import fxgen
-                    svg = fxgen.curve_ornament(int(wmm * 3), int(hmm * 3), d,
-                                               (_kv(extra, "color") or "BE123C").lstrip("#"),
-                                               float(wid))
+                    cname = (_kv(extra, "color") or "BE123C").lstrip("#")
+                    svg = fxgen.curve_ornament(int(wmm * 3), int(hmm * 3), dn, cname,
+                                               float(_f(_kv(extra, "w"), 2.0)))
                     pth = self._write_tmp(svg, ".svg")
                     if pth:
                         layers.append("%s[#image(%s, width: %.3fmm)]" % (base, q(pth), wmm))
                 except Exception as e:
-                    WARNINGS.append("collage 的 curve 生成失败：%s" % str(e)[:50])
+                    WARNINGS.append("collage 的 curve 失败：%s" % str(e)[:50])
+
+            elif kind in ("orn", "flourish", "vine"):
+                # 装饰卷草：以起点为锚，向右画对称 S 形双钩
+                wmm, hmm = _size2(size, 30.0, 10.0)
+                colv = _color(content, "8B8070")
+                wid = _f(_kv(extra, "w"), 0.7)
+                K = 3.0
+                W = int(wmm * K)
+                H = int(hmm * K)
+                m = H / 2.0
+                d = ("M0,%.1f C%.1f,%.1f %.1f,%.1f %.1f,%.1f S%.1f,%.1f %.1f,%.1f"
+                     % (m, W * 0.18, m - H * 0.42, W * 0.36, m - H * 0.42, W * 0.5, m,
+                        W * 0.64, m + H * 0.42, W * 0.82, m + H * 0.42))
+                try:
+                    import fxgen
+                    _oc = (_kv(extra, "color") or "8B8070").lstrip("#")
+                    svg = fxgen.curve_ornament(W, H, d, _oc, float(wid))
+                    pth = self._write_tmp(svg, ".svg")
+                    if pth:
+                        layers.append("%s[#image(%s, width: %.3fmm)]" % (base, q(pth), wmm))
+                except Exception as e:
+                    WARNINGS.append("collage 的 orn 失败：%s" % str(e)[:50])
 
             elif kind in ("vtext", "vertical"):
-                parts = str(size).replace("，", ",").split(",")
-                wmm = _mm(parts[0], 20.0)
-                hmm = _mm(parts[1], 60.0) if len(parts) > 1 and str(parts[1]).strip() else 60.0
+                wmm, hmm = _size2(size, 20.0, 60.0)
                 fsize = _f(_kv(extra, "size"), 10.0)
                 gap = _f(_kv(extra, "gap"), 3.0)
                 colv = _color(_kv(extra, "color"), "1A1A1A")
-                # 竖排：逐字换行
                 chars = [ch for ch in content.strip() if not ch.isspace()]
                 body = " #linebreak() ".join(esc(ch) for ch in chars)
                 layers.append(
-                    "%s[#block(width: %.3fmm, height: %.3fmm)[#set par(leading: %.2fpt)\n"
+                    "%s[#block(width: %.3fmm, height: %.3fmm)[#set par(leading: %.2fpt)%s"
                     "#text(size: %.2fpt, fill: %s)[%s]]]"
-                    % (base, wmm, hmm, gap * 2.83, fsize, colv, body))
+                    % (base, wmm, hmm, gap * 2.83, chr(10), fsize, colv, body))
 
             else:
-                WARNINGS.append("collage 不认识图层类型「%s」，已跳过" % kind)
+                WARNINGS.append("collage 不认识图层类型「%s」" % kind)
 
         if not layers:
             return ""
-
         _ws = ("%.3fmm" % cw) if cw else "100%"
         _hs = ("%.3fmm" % ch) if ch else "100%"
         return ("#block(width: %s, height: %s%s, clip: true)[\n  %s\n]"
                 % (_ws, _hs,
                    (", fill: %s" % _color(bgc)) if bgc else "",
                    "\n  ".join(layers)))
+
     def _invoice(self, blocks, cls, kvs=None):
         """发票明细。每行：品名|数量|单价|小计（小计可省，自动算）"""
         kvs = kvs or {}
