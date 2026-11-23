@@ -441,8 +441,21 @@
   let base = if tint == none { rgb("#DCE7F5") } else { tint }
   let rad = radius-of(rat)
   let inner = pad(x: inset-v, y: inset-v, body)
-  // bg: 传入背景图路径（渐变/照片），磨砂卡才会真的\"透\"出后面的内容。
-  // 磨砂玻璃在白纸上是看不出效果的 —— 它必须压在东西上面。
+
+  // ★ 颗粒必须是双层。原因（实测）：
+  //   单层白颗粒叠在白底上，对比度只有 3.1 灰阶 = 1.2%，肉眼完全看不出来，
+  //   而且 grain-a 越大越白越看不见 —— 参数方向是反的。
+  //   改成「深颗粒 + 白颗粒错位半格」后，深粒子把底色压暗、白粒子提亮，
+  //   才有砂面的明暗交错感。深颗粒色由背景色推出来，不影响 tint 自定义。
+  //   深颗粒透明度固定 30%（实测甜点）：transparentize(100%) 是「完全不透明」的对立面
+  //   —— Typst 里 transparentize(100%) = 全透明 = 看不见，之前卡到 100% 直接导致深颗粒消失。
+  //   白颗粒错位半格叠加，形成「暗-亮」交错的砂面。
+  //   darken(58%) 让深颗粒有足够对比，不依赖 grain-a 的放大。
+  let dk = base.darken(58%)
+  let dot(dc, a, off: 0pt) = place(center + horizon,
+    move(dx: off, box(width: gs * 0.42, height: gs * 0.42, radius: 50%,
+      fill: dc.transparentize(a))))
+
   let card = block(
     width: 100%, radius: rad, inset: 0pt,
     fill: base.transparentize(o),
@@ -452,9 +465,9 @@
     // 颗粒层：place 的 height: 100% 在 block[...] 内是相对这个 block（不是页面），
     // 所以能正好铺满。前提是 block 的 inset 必须为 0，否则内部尺寸算不对。
     #place(top + left, box(width: 100%, height: 100%,
-      fill: tiling(size: (gs, gs),
-        box(width: gs * 0.42, height: gs * 0.42, radius: 50%,
-            fill: rgb("#FFFFFF").transparentize(ga)))))
+      fill: tiling(size: (gs, gs), dot(dk, 30%))))
+    #place(top + left, box(width: 100%, height: 100%,
+      fill: tiling(size: (gs, gs), dot(rgb("#FFFFFF"), ga, off: gs * 0.5))))
     // 顶部镜面高光
     #place(top + left, block(width: 100%, height: bw,
       fill: rgb("#FFFFFF").transparentize(l)))
