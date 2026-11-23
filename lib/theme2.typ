@@ -456,9 +456,13 @@
     move(dx: off, box(width: gs * 0.42, height: gs * 0.42, radius: 50%,
       fill: dc.transparentize(a))))
 
+  // 有 bg 时底色必须极淡：底色是「雾」，压在背景上面。
+  // 实测 opacity=22 的 #DCE7F5 仍会把背景冲成灰紫（用户指出“颜色不对”）。
+  // 所以 bg 分支下用白色雾（不带蓝调）且不透明度减半，让背景色彩透出来。
+  let fog = if bg == none { base.transparentize(o) } else { rgb("#FFFFFF").transparentize(100% - o * 0.55) }
   let card = block(
     width: 100%, radius: rad, inset: 0pt,
-    fill: base.transparentize(o),
+    fill: fog,
     stroke: bd + rgb("#FFFFFF"),
     clip: true,
   )[
