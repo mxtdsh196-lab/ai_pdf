@@ -92,12 +92,16 @@ def noise_texture(w=240, h=140, alpha=0.35, freq=0.85):
     return svg
 
 
-def gradient_blob(w=300, h=200, c1='#2547A8', c2='#7C3AED', angle=135, strength=0.85):
+def gradient_blob(w=300, h=200, c1='#2547A8', c2='#7C3AED', angle=135, strength=0.85, blur=0):
     """流体渐变底（极光感）。
 
     angle 真正生效：两个径向光斑的位置按角度绕中心对向分布。
     之前 angle 写在签名里但函数体完全没用，6 个角度输出 md5 全同（实测）。
     strength 控制光斑起始不透明度（0~1）。
+
+    blur > 0 时整体套 feGaussianBlur（用户单位 = pt）。这是「真磨砂玻璃」的关键：
+    磨砂模糊的是它下面的背景，只叠颗粒和半透明白层是假的（用户拿了真玻璃照片对比指出）。
+    背景是纯图形，模糊它不损失任何文字可搜索性。
     """
     import math
     a = _hex(c1)
@@ -112,21 +116,54 @@ def gradient_blob(w=300, h=200, c1='#2547A8', c2='#7C3AED', angle=135, strength=
     y2 = 0.5 - r1 * math.sin(rad)
     s1 = max(0.0, min(1.0, float(strength)))
     s2 = max(0.0, min(1.0, s1 * 0.88))
+    bv = float(blur or 0)
+    # blur > 0 时【不用】feGaussianBlur：实测会让 Typst 把整张 SVG 栅格化，
+    # 7 张背景变 5000x2167 PNG，PDF 从 54KB 涨到 6.2MB，bbox 还溢出页面。
+    # 改用「饱和线性渐变底 + 一圈彩色光斑 + 白色高光」纯矢量叠出柔和色晕，
+    # 视觉上等同被揉化的背景，images=0，体积几十 KB。
+    blobs = []
+    defs_extra = []
+    hi = ''
+    if bv > 0:
+        n = max(3, min(12, int(bv / 5) + 3))
+        for i in range(n):
+            th = i * 2.4
+            bx = 0.5 + 0.40 * math.cos(th)
+            by = 0.5 + 0.40 * math.sin(th)
+            br = 0.34 + 0.20 * ((i * 3 % 5) / 5.0)
+            bc = a if i % 2 == 0 else b
+            defs_extra.append(
+                '<radialGradient id="s%d" cx="%.3f" cy="%.3f" r="%.3f">'
+                '<stop offset="0" stop-color="%s" stop-opacity="0.42"/>'
+                '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
+                % (i, bx, by, br, bc, bc))
+            blobs.append('<rect width="%d" height="%d" fill="url(#s%d)"/>' % (w, h, i))
+        hi = '<rect width="%d" height="%d" fill="url(#hi)"/>' % (w, h)
+        defs_extra.append(
+            '<radialGradient id="hi" cx="%.3f" cy="%.3f" r="0.55">'
+            '<stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>'
+            '<stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>'
+            % (x1, y1))
+        base_fill = ('<linearGradient id="bg0" x1="0" y1="0" x2="1" y2="1">'
+                     '<stop offset="0" stop-color="%s"/><stop offset="1" stop-color="%s"/>'
+                     '</linearGradient><rect width="%d" height="%d" fill="url(#bg0)"/>'
+                     % (a, b, w, h))
+    else:
+        base_fill = '<rect width="%d" height="%d" fill="#FFFFFF"/>' % (w, h)
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">'
-        '<defs>'
-        '<radialGradient id="b1" cx="%.4f" cy="%.4f" r="0.72">'
-        '<stop offset="0" stop-color="%s" stop-opacity="%.2f"/>'
-        '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
-        '<radialGradient id="b2" cx="%.4f" cy="%.4f" r="0.66">'
-        '<stop offset="0" stop-color="%s" stop-opacity="%.2f"/>'
-        '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
-        '</defs>'
-        '<rect width="%d" height="%d" fill="#FFFFFF"/>'
-        '<rect width="%d" height="%d" fill="url(#b1)"/>'
-        '<rect width="%d" height="%d" fill="url(#b2)"/>'
-        '</svg>'
-    ) % (w, h, x1, y1, a, s1, a, x2, y2, b, s2, b, w, h, w, h, w, h)
+        ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><defs>'
+         '<radialGradient id="b1" cx="%.4f" cy="%.4f" r="0.72">'
+         '<stop offset="0" stop-color="%s" stop-opacity="%.2f"/>'
+         '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
+         '<radialGradient id="b2" cx="%.4f" cy="%.4f" r="0.66">'
+         '<stop offset="0" stop-color="%s" stop-opacity="%.2f"/>'
+         '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
+         '%s</defs>%s'
+         '<rect width="%d" height="%d" fill="url(#b1)"/>'
+         '<rect width="%d" height="%d" fill="url(#b2)"/>%s%s</svg>')
+        % (w, h, x1, y1, a, s1, a, x2, y2, b, s2, b, ''.join(defs_extra),
+           base_fill, w, h, w, h, ''.join(blobs), hi)
+    )
     return svg
 
 
