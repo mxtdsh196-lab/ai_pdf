@@ -904,8 +904,13 @@ class R:
                         _bc1 = (kvs.get("bg-c1") or "2547A8").lstrip("#")
                         _bc2 = (kvs.get("bg-c2") or "BE123C").lstrip("#")
                         _bang = _num(("bg-angle", "bg-deg"), 120, 0, 360, "fx frost bg-angle")
+                        # 关键：磨砂玻璃要模糊的是它下面的背景。背景模糊 24pt 才像真玻璃
+                        # （用户拿真玻璃照片对比过：真实磨砂是「背景被揉化」，不是「叠一层颗粒」）。
+                        # 背景是纯图形，模糊它不损失任何文字可搜索性。
+                        _bblur = _num(("bg-blur", "bg-bl"), 24, 0, 80, "fx frost bg-blur")
                         _svgbg = fxgen.gradient_blob(600, 260, _bc1, _bc2,
-                                                     angle=int(_bang), strength=1.0)
+                                                     angle=int(_bang), strength=1.0,
+                                                     blur=float(_bblur))
                         _bgpath = _mkstemp(suffix=".svg", prefix="fxbg_")
                         open(_bgpath, "w", encoding="utf-8").write(_svgbg)
                         _bg_out = ", bg: %s" % q(_bgpath)
@@ -953,8 +958,12 @@ class R:
                 _gst = _num(("strength", "density"), 0.85, 0.0, 1.0, "fx gradient strength")
                 if _gst > 1.0:
                     _gst = _gst / 100.0
+                # blur：给渐变加高斯模糊。frost 的 bg 默认模糊（磨砂玻璃要模糊背景），
+                # 单独的 fx gradient 保持清晰。blur=0 可显式关掉。
+                _gblur = _num(("blur", "b"), 0, 0, 60, "fx gradient blur")
                 svg = fxgen.gradient_blob(int(w), int(h), a or "2547A8", b or "7C3AED",
-                                          angle=int(_ang), strength=_gst)
+                                          angle=int(_ang), strength=_gst,
+                                          blur=float(_gblur))
             elif kind == "wave":
                 # amp=波幅 color=颜色
                 _amp = _num(("amp", "amplitude"), 8, 1, 40, "fx wave amp")
