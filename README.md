@@ -199,7 +199,170 @@ v2.2 的特效强度是写死的，AI 没有任何手段改。v2.2 全部开放�
 ---
 
 
-## 代码结构（v2.2）
+## 自由拼贴 collage（v2.3 大幅扩展）
+
+整页绝对定位排版。每个图层一行，坐标单位 mm。
+
+```markdown
+::: collage w=267 h=137.06 bg=paper palette_from=1F3A5F
+
+bgimg|src:wpphoto:mountain     照片铺满当底（可写 URL 源，见下）
+mask|001436|45                 整页蒙版，第二段是透明度 0~100
+img|/path/a.jpg|0,0|70,50|shape=arc k=0.28 pos=left-top pad=14 bw=1.2 bc=FFFFFF
+text|标题|0,0|160|pos=left-top pad=22 size=30 weight=bold font=BodoniModa_400i color=accent track=8
+block|正文|0,0|120,40|pos=right-bottom pad=20 fill=deep color=paper size=9 pad=5
+vtext|竖排|0,0|24,90|pos=right-top pad=14 size=13 cols=1 gap=4
+oval|/path/c.jpg|0,0|70,70|pos=center-middle pad=0
+dot|8FA3BD|0,0|2.5|pos=left-bottom pad=30
+ring|8B8070|0,0|3|pos=right-middle pad=30 w=0.8
+line|C9D6E5|0,0|120,0|pos=left-top pad=40 w=0.5
+curve|M10,70 C60,20 140,95 270,30|0,0|60,20|pos=center-bottom pad=10 color=BE123C w=1.5
+orn|8B8070|0,0|40,12|pos=center-top pad=10 w=1
+:::
+```
+
+### 定位：pos 锚点，不用手算坐标
+
+`pos=` 取 `left`/`center`/`right` × `top`/`middle`/`bottom` 的组合，配 `pad=` 边距，x,y 段写 `0,0` 占位即可。工具会按**真实版心**（页面减去 margin）算位置。
+
+也可以直接给 `x,y`。
+
+### 异形裁剪：shape=
+
+`rect`(默认) / `arc`(左上大圆角) / `arc4`(四角圆角) / `slant`(斜切) / `notch`(缺角) / `ellipse` / `arch`(拱顶) / `wave`(波浪底)。
+
+`k=` 弧度比例，默认 0.26（0.02~0.49）。描边 `bw`/`bc` 在异形上同样生效。
+
+照片会自动预裁到**精确目标比例**，不会变形——这一步必须做，因为 Typst 算 SVG 包围盒用的是 `<image>` 在 `slice` 展开后的尺寸，不是 viewport。实测 600×404 的 SVG 声明 `width:86mm` 会画出 97.2mm（放大 1.13 倍），预裁 + `preserveAspectRatio='none'` 才能得到 86.0mm。
+
+### 画布会自动收进版心
+
+写 `w=297`（页面宽）但主题 `margin=15mm` 时，版心只有 267mm，画布会向右溢出。现在会**自动等比缩到版心**并告警，图形和字号一起缩。
+
+想让画布真的铺满整页，显式写 `margin=0mm`。
+
+---
+
+## 角色色阶 palette_from（v2.3）
+
+给**一个**基色，工具用 **OKLab** 生成同色相的深→浅阶梯。AI 不用懂色彩学，只写角色名。
+
+```markdown
+::: collage w=267 h=137.06 bg=paper palette_from=1F3A5F
+block|标题|0,0|120,30|fill=deep color=paper
+:::
+```
+
+| 角色 | 用途 | 明度 |
+|---|---|---|
+| `deep` | 压照片 / 深色块底 | L=0.20 |
+| `mid` | 次级色块 | L=0.46 |
+| `veil` | 半透明蒙版色（配 alpha 用） | L=0.40 |
+| `soft` | 中间调 | L=0.58 |
+| `pale` | 页面 / 卡片浅底 | L=0.84 |
+| `paper` | 近白纸色 | L=0.98 |
+| `ink` | 正文墨色 | — |
+| `accent` | 基色本身 | — |
+
+`fill=` / `color=` / `bg=` 都支持角色名。也可以继续写十六进制精调。
+
+**为什么不预设一堆配色**：参考图千变万化，预设永远追不完。给机制（给一个色相，自动出阶梯）比给答案（cinema/editorial/nature 等固定色板）更能适配新场景。
+
+**为什么不用 cubehelix（如 `corkscrew` 包）**：cubehelix 生成的是**彩虹色阶**（黑→蓝→绿→金→粉→白），色相在变。它服务于数据可视化，目的是让不同数值视觉可分。排版色阶要的是「同一色相只变明度」——实测 cubehelix 输出跨越蓝绿金粉，不能当色阶用。
+
+---
+
+## 自动对比色（v2.3）
+
+**不写 `color` 时，按底色亮度自动选黑字或白字。**
+
+```markdown
+block|文字|0,0|100,30|fill=1F3A5F            → 自动白字（11.5:1）
+block|文字|0,0|100,30|fill=DDE5EC            → 自动黑字（14.5:1）
+```
+
+写了但对比度不够时会**告警并自动纠正**：
+
+```
+collage block 文字对比度只有 1.6:1（#141414 压在 #1F3A5F 上），
+几乎看不清；已改成 #FFFFFF。
+```
+
+判据用 WCAG 2.1 标准：正文 ≥4.5:1，大字 ≥3:1。
+
+**画布是背景照片（`bgimg`）时不做检查**，直接默认白字——照片亮度不可预知。
+
+---
+
+## 从网络取图（v2.3）
+
+图片位置可以写 `src:` 开头的取图指令，工具会下载到本地缓存再交给 Typst。
+
+```markdown
+bgimg|src:wpphoto:mountain
+img|src:wikimedia:coffee
+img|src:picsum:night
+```
+
+| 前缀 | 来源 | 授权 | 实测 |
+|---|---|---|---|
+| `src:wpphoto:` | wordpress.org/photos | **CC0** | ✅ 原图约 4000px，铺 267mm ≈ 380dpi |
+| `src:wikimedia:` | Wikimedia Commons | CC0（可筛） | ✅ 官方 API，偏「文献级」照片 |
+| `src:picsum:` | picsum.photos | Unsplash | ✅ 免 key，但 seed 是哈希不是关键词 |
+
+规则：
+- **多词只用第一个词**。实测 `snow mountain` 在 wpphoto 返回 0 结果，而 `snow` 有 1327 张。
+- **下划线当空格**：`src:wpphoto:snow_mountain` → 搜 `snow`。空格会被 `|` 分隔符截断。
+- **别用 `@` 开头**：pandoc 会把 `@xxx` 解析成 Citation 节点，内容整段消失。这也是为什么用 `src:` 而不是 `@`。
+- 取不到图会告警并跳过该图层，不会静默消失。
+
+### 实测被 Cloudflare 挡死、不要浪费时间再试的站
+
+| 站 | 证据 |
+|---|---|
+| pxhere | `cf-mitigated: challenge`，Turnstile 无法自动通过 |
+| stocksnap | `__cf_chl_rt_tk` |
+| creazilla / publicdomainpictures | 403 |
+| cc0.cn / gahag | 连不上 |
+| loremflickr | 500 |
+| t.alcy.cc | 404 |
+| openverse | 000 |
+
+尝试过的手段全部无效：完整浏览器头（`Sec-CH-UA` / `Sec-Fetch-*`）、`--compressed`、真实无头浏览器（控制台报 `No available adapters`，Turnstile 找不到可用验证方式）。
+
+**这些站都是 CC0 免费图库，本来就有合法途径。** 需要里面的图，人工挑好另存到本地目录，比任何绕过方案都稳。
+
+---
+
+## 竖排（v2.3 改真竖排）
+
+`vtext` / `vertical` 改用 basho 的 `tate`，是**连续竖排**，不是逐字换行。
+
+```markdown
+vtext|色阶与竖排|0,0|24,90|pos=right-top pad=14 size=13 cols=1 gap=4
+```
+
+- `cols=` 分几列（1~8，默认 1），多列从右往左
+- `gap=` 字间距
+- 中文标点用竖排形式（，。等）
+
+旧实现是 `每字 + linebreak()`，三个问题：英文被拆成单个字母（`Short` → `S/h/o/r/t`）、中文标点错位、超出高度的部分直接掉出画布。
+
+⚠️ 踩过的坑：`#tate(...)` 的内容**不能套 `#text(...)`**，套了就退化成横排。正确写法是外层 `#set text(...)` 设样式，`tate` 里放纯文本。
+
+---
+
+## 版心传递（v2.3）
+
+`md2typst` 现在知道真实版心尺寸（页面减 margin），由 `core.py` 在转换前通过 `set_ctx()` 传入。
+
+不传的话 collage 会把用户写的 `w` 直接当画布大小，等于默认 `margin=0`，超出版心就向右溢出。这个 bug 表现为 `pdf_lint` 报 `graphic_overflow` 右 15mm。
+
+⚠️ `a['margin']` 为空时必须回退到**主题默认值**（`THEMES[theme]['margin']`），否则版心算成整页，限幅等于没做。注意主题表叫 `THEMES`，`THEME` 是 theme2.typ 的文件路径（str）。
+
+---
+
+## 代码结构（v2.3）
 ```
 lib/
 ├── core.py         1540 行  Typst 后端：cfg / 封面 / 编译 / 24 个 PDF 命令
@@ -212,10 +375,14 @@ lib/
 ├── mermaid2.py      590 行  sequence / gantt / classDiagram
 ├── fxgen.py         170 行  SVG 特效生成（装饰层）
 ├── qrgen.py         412 行  QR 码编码器（零依赖）
+├── colorkit.py     WCAG 2.1 对比度 + 自动前景色
+├── oklch.py        OKLab/OKLCH 色彩空间 + 单色相明度阶梯
+├── imgsrc.py       取图：wordpress/wikimedia/picsum 下载缓存
+├── collage_doc.py  collage 语法说明（进工具描述）
 └── typst-libs/      60 文件  meander（环绕）+ basho（竖排）
                     8117 行
 ```
-打包体积 **553 KB**。
+打包体积 **658 KB**。
 
 ### 构建可复现
 
@@ -285,6 +452,10 @@ lib/
 ├── texmath.py       340 行  LaTeX → Typst 数学转换
 ├── mermaid.py       631 行  flowchart 渲染器
 ├── mermaid2.py      590 行  sequence / gantt / classDiagram 渲染器
+├── colorkit.py     WCAG 2.1 对比度 + 自动前景色
+├── oklch.py        OKLab/OKLCH 色彩空间 + 单色相明度阶梯
+├── imgsrc.py       取图：wordpress/wikimedia/picsum 下载缓存
+├── collage_doc.py  collage 语法说明（进工具描述）
 └── typst-libs/      60 文件  meander（环绕）+ basho（竖排）
                      5972 行
 ```
