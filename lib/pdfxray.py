@@ -329,11 +329,15 @@ def anomalies(p, tol=1.0):
     # PyMuPDF 对同一张图会重复返回多条（实测一张图报 4 次），先按几何去重，
     # 否则图像两两比对会变成 N×N 的重复噪音，把真正的 image_over_text 淹掉。
     imgs = []
+    _bgs = []   # 背景级大图单独放，不参与重叠判定
     for _r in _raw_imgs:
         if not any(abs(_r.x0 - x.x0) < 0.5 and abs(_r.y0 - x.y0) < 0.5
                    and abs(_r.width - x.width) < 0.5 and abs(_r.height - x.height) < 0.5
-                   for x in imgs):
-            imgs.append(_r)
+                   for x in imgs + _bgs):
+            if _r.width >= pw * 0.85 or _r.height >= ph * 0.85:
+                _bgs.append(_r)
+            else:
+                imgs.append(_r)
     for ir in imgs:
         for t in texts:
             tr = t['rect']
@@ -344,32 +348,54 @@ def anomalies(p, tol=1.0):
             inside = (tr.x0 >= ir.x0 - 1 and tr.x1 <= ir.x1 + 1
                       and tr.y0 >= ir.y0 - 1 and tr.y1 <= ir.y1 + 1)
             if inside:
-                # 完全在图内，可能是「fx-card 正文」（设计如此）也可能是「被压住的后续标题」。
-                # 判据：这张图是否被人为撑到远超常规高度。fx gradient 默认 h=220 用户单位
-                # ≈ 176pt，若超过 1.3 倍说明图片溢出自己的容器，压住了后面的内容。
-                if ir.height > 230:
+                # 完全在图内，两种可能：
+                #  a) 背景图（铺满整页）上的文字 —— 设计如此，正常
+                #  b) 局部小图被撑高、压住了下面别的内容 —— 真 bug
+                # 区分方式：图片面积是否接近整页。
+                _page_area = max(1.0, pw * ph)
+                # 背景图判据：任一维度达页面 85% 以上就认为是铺底图
+                # （Typst 背景图 + fit:cover 常会超出页面，不能只看面积）
+                _is_bg = ((ir.width * ir.height) > _page_area * 0.5
+                          or ir.width >= pw * 0.85
+                          or ir.height >= ph * 0.85)
+                if not _is_bg and ir.height > 230:
                     out.append(('image_over_text', tr,
                                 '文字被超高图像覆盖（图高 %.0fpt，疑似溢出容器）：%r'
                                 % (ir.height, t['text'][:20])))
+                continue
+            _is_bg2 = (ir.width >= pw * 0.85 or ir.height >= ph * 0.85)
+            if _is_bg2:
                 continue
             out.append(('image_over_text', tr,
                         '图像压住文字 %.1fpt 高：%r  bbox y=%.1f~%.1f 图 y=%.1f~%.1f'
                         % (oy, t['text'][:20], tr.y0, tr.y1, ir.y0, ir.y1)))
 
-    # 2.6) 图像互相重叠（同一区域叠了多张，多半是尺寸算错没撑开）
+    # 2.6) 图像互相重叠
+    # 不能用 get_image_info() 的 bbox 直接判重叠：Typst 的 fit:"cover" 会
+    # 把图按原图比例放大再 clip，PDF 里的图像对象是放大后的尺寸
+    # （实测声明 54mm、实际报 90.6mm），拿它判重叠必然满屏误报。
+    # 只在「两张图几乎完全重合」时才报（真的是重复放置）。
+    _pr = pymupdf.Rect(0, 0, pw, ph)
     for i in range(len(imgs)):
         for j in range(i + 1, len(imgs)):
             a, b = imgs[i], imgs[j]
-            ox = min(a.x1, b.x1) - max(a.x0, b.x0)
-            oy = min(a.y1, b.y1) - max(a.y0, b.y0)
-            if ox > 4.0 and oy > 4.0:
-                # 同位置同尺寸的重复条目（PyMuPDF 有时一张图报多次）要跳过
-                if abs(a.x0 - b.x0) < 0.5 and abs(a.y0 - b.y0) < 0.5 \
-                        and abs(a.width - b.width) < 0.5 and abs(a.height - b.height) < 0.5:
-                    continue
-                out.append(('image_overlap', a,
-                            '两张图重叠 %.1f×%.1fpt  图1 y=%.1f~%.1f 图2 y=%.1f~%.1f'
-                            % (ox, oy, a.y0, a.y1, b.y0, b.y1)))
+            ca = a & _pr
+            cb = b & _pr
+            if ca.is_empty or cb.is_empty:
+                continue
+            if abs(ca.x0 - cb.x0) < 1.0 and abs(ca.y0 - cb.y0) < 1.0 \
+                    and abs(ca.width - cb.width) < 1.0 and abs(ca.height - cb.height) < 1.0:
+                continue
+            ox = min(ca.x1, cb.x1) - max(ca.x0, cb.x0)
+            oy = min(ca.y1, cb.y1) - max(ca.y0, cb.y0)
+            if ox <= 0 or oy <= 0:
+                continue
+            # 只有「重叠面积占较大那张的 80% 以上」才算重复放置
+            _ar = min(ca.width * ca.height, cb.width * cb.height)
+            if _ar > 0 and (ox * oy) / _ar > 0.8:
+                out.append(("image_overlap", ca,
+                            "两张图几乎完全重叠 %.0fx%.0fpt，疑似重复放置"
+                            % (ox, oy)))
 
     # 3) 文字两两重叠
     #    只报「明显压字」，不报排版正常的相邻/叠字：
