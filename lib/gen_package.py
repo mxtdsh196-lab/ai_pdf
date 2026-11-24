@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 #生成 ai_pdf v2（Typst引擎）沙盒包
 import base64, hashlib, io, json, os
+import collage_doc
 
 # ============================================================
 # ai_pdf 唯一打包入口（真源 = .typst_test/lib）
@@ -23,6 +24,10 @@ mdm2 = open(os.path.join(LIB, 'mermaid2.py'), 'rb').read()
 fxg = open(os.path.join(LIB, 'fxgen.py'), 'rb').read()
 qrg = open(os.path.join(LIB, 'qrgen.py'), 'rb').read()
 xry = open(os.path.join(LIB, 'pdfxray.py'), 'rb').read()
+# v2.3 新增：颜色/色阶/取图三个模块（collage 的自动对比色与 src: 取图依赖它们）
+ckit = open(os.path.join(LIB, 'colorkit.py'), 'rb').read()
+okl = open(os.path.join(LIB, 'oklch.py'), 'rb').read()
+isrc = open(os.path.join(LIB, 'imgsrc.py'), 'rb').read()
 # 打包器必须把自己也辞进包：否则 runtime 里的 gen_package.py 永远是旧版，
 # 审查者/AI 去读那份会被误导（实测 runtime 副本停在只算 5 个文件的旧逻辑）。
 # 注意：不能把自身算进 ver，那是自引用（需要算自己的 hash 才能算自己的 hash），
@@ -127,6 +132,9 @@ COMPONENTS = (
  '【行内颜色】[文字]{color=danger} 语义色；[文字]{color=#BE123C} 指定十六进制；[文字]{gradient=true} 渐变字。'
  '::: pagebreak （强制分页，空内容）'
  '::: toc （自动目录，空内容）'
+ '''
+''' + collage_doc.COLLAGE_DOC + '''
+'''
  '**每个 ::: 必须配对闭合**：开头 ::: progress 换行写数据，结尾单独一行 :::。漏了闭合后面全乱。'
  '行内：[重点]{.badge .primary}徽章；==高亮==荧光标记。'
  '按字体：[文字]{.font-Cinzel} 改单段字体（名字里的空格写下划线）；::: font-Cinzel 到 ::: 之间整块换字体。'
@@ -362,7 +370,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.2.0',
+ 'version': '2.3.0',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('【AI生成 PDF·做PDF就用本包】Markdown一步转中文精排 PDF。真圆角卡片、渐变表头、胶囊徽章、KPI数据卡、进度条、评分、横条图、时间线、步骤、定义表、对比双栏、六色提示框、封面页、页眉页脚、水印，字号/行距/边距/字体全可调。'
@@ -390,6 +398,10 @@ const FXG = RUNTIME + '/fxgen.py';
 const QRG = RUNTIME + '/qrgen.py';
 const GNP = RUNTIME + '/gen_package.py';
 const XRY = RUNTIME + '/pdfxray.py';
+const CKIT = RUNTIME + '/colorkit.py';
+const OKL = RUNTIME + '/oklch.py';
+const ISRC = RUNTIME + '/imgsrc.py';
+const ERRORLOG = RUNTIME + '/last_error.log';
 const VERFILE = RUNTIME + '/.ver';
 const VER = '__VER__';
 const CORE_B64 = '__CORE__';
@@ -402,6 +414,9 @@ const FXG_B64 = '__FXG__';
 const QRG_B64 = '__QRG__';
 const GNP_B64 = '__GNP__';
 const XRY_B64 = '__XRY__';
+const CKIT_B64 = '__CKIT__';
+const OKL_B64 = '__OKL__';
+const ISRC_B64 = '__ISRC__';
 const GNPVERFILE = RUNTIME + '/.gnpver';
 const GNPVER = '__GNPVER__';
 const LIBS_B64 = '__LIBS__';
@@ -486,9 +501,18 @@ async function ensure() {
  await Tools.Files.writeBinary(THEME, THEME_B64);
  await Tools.Files.writeBinary(TEXM, TEXM_B64);
  await Tools.Files.writeBinary(MDM, MDM_B64);
-  await Tools.Files.writeBinary(MDM2, MDM2_B64);
-  await Tools.Files.writeBinary(FXG, FXG_B64);
-  await Tools.Files.writeBinary(QRG, QRG_B64);
+ await Tools.Files.writeBinary(MDM2, MDM2_B64);
+ await Tools.Files.writeBinary(FXG, FXG_B64);
+ await Tools.Files.writeBinary(QRG, QRG_B64);
+ await Tools.Files.writeBinary(CKIT, CKIT_B64);
+ await Tools.Files.writeBinary(OKL, OKL_B64);
+ await Tools.Files.writeBinary(ISRC, ISRC_B64);
+ await unpackLibs();
+ await Tools.Files.write(VERFILE, VER);
+ }
+ // GNP/XRY 单独用 GNPVER 管版本，不能嵌在上面的 if (need) 里。
+ // 之前那样写：只改 pdfxray.py 时 .ver 不变（因为 .ver 是 8 个核心文件的 hash），
+ // need=false，于是 XRY 永远不更新，改了半天没生效。
  let needGnp = true;
  try {
  const gv = await Tools.Files.read(GNPVERFILE);
@@ -498,9 +522,6 @@ async function ensure() {
  await Tools.Files.writeBinary(GNP, GNP_B64);
  await Tools.Files.writeBinary(XRY, XRY_B64);
  await Tools.Files.write(GNPVERFILE, GNPVER);
- }
- await unpackLibs();
- await Tools.Files.write(VERFILE, VER);
  }
  await ensureTypst();
  ready = true;
@@ -638,21 +659,24 @@ async function rotate_pdf_pages(p) {
 }
 
 async function compress_pdf(p) {
- if (!p.pdf_path || !p.output_path) throw new Error('pdf_path/output_path required');
- // 必须先确认输入文件存在且是合法 PDF。
- // 之前这里没校验：Ghostscript 在输入缺失时仍会创建空白 PDF 且退出码 0，
- // 于是「压缩成功」返回的其实是 1 页空白文件（实测 2218 字节）。
- const before = await call('info', { pdf: p.pdf_path },90000);
+ // 失败一律 return {success:false,error:...}，不 throw。
+ // 实测 throw 在宿主工具边界会被吞成空错误：包内日志 message 完整 37 字，
+ // 但用户只看到空白。return 走 wrap 正常分支就能透传。
+ if (!p.pdf_path || !p.output_path) {
+ return { success: false, error: 'pdf_path/output_path required' };
+ }
+ // 输入必须真是 PDF：Ghostscript 遇到非 PDF 仍会造出空白页且退出码 0
+ // （实测 1 字节 txt -> 2218 字节假 PDF，ratio -221700%）。
+ const before = await call('info', { pdf: p.pdf_path }, 90000);
  if (!before || before.success === false || !before.file_size) {
- throw new Error('PDF not found or not a valid PDF: ' + p.pdf_path +
- (before && before.error ? ' (' + before.error + ')' : ''));
+ return { success: false, error: 'PDF not found or not a valid PDF: ' + p.pdf_path +
+ (before && before.error ? ' (' + before.error + ')' : '') };
  }
  if (p.pdf_path === p.output_path) {
- throw new Error('output_path must differ from pdf_path');
+ return { success: false, error: 'output_path must differ from pdf_path' };
  }
- // 输入存在但可能加密，gs 无法处理加密 PDF，提前拒绝而不是产出垃圾
  if (before.encrypted === true) {
- throw new Error('input PDF is encrypted; decrypt it first (decrypt_pdf)');
+ return { success: false, error: 'input PDF is encrypted; decrypt it first (decrypt_pdf)' };
  }
  const quality = p.quality || 'ebook';
  const preset = { screen: '/screen', ebook: '/ebook', printer: '/printer' }[quality] || '/ebook';
@@ -660,14 +684,14 @@ async function compress_pdf(p) {
  preset + ' -dDetectDuplicateImages=true -dCompressFonts=true -sOutputFile=' +
  q(p.output_path) + ' ' + q(p.pdf_path) + ' 2>&1; cd ' + q(RUNTIME) +
  ' && python3 core.py info ' + q(JSON.stringify({ pdf: p.output_path }));
- const r = await sh(cmd,300000);
+ const r = await sh(cmd, 300000);
  const j = pickJson(r.out);
  if (!j) return { success: false, error: 'compress failed', raw_output: r.out.slice(-800) };
  if (before && before.file_size) {
  j.original_bytes = before.file_size;
  j.saved_bytes = before.file_size - j.file_size;
- j.ratio = before.file_size >0
- ? Math.round((1 - j.file_size / before.file_size) *1000) /10 + '%'
+ j.ratio = before.file_size > 0
+ ? Math.round((1 - j.file_size / before.file_size) * 1000) / 10 + '%'
  : null;
  }
  j.quality = quality;
@@ -775,11 +799,26 @@ function wrap(fn) {
  const data = await fn(params || {});
  complete({ success: !!(data && data.success !== false), data: data });
  } catch (e) {
- complete({ success: false, error: String((e && e.message) || e) });
+ // 诊断：部分分支（如 compress_pdf 在 await 之后 throw）宿主会报空错误。
+ // 把现场写到 /last_error.log，下次复现直接看文件而不是猜。
+ let msg = '';
+ try { msg = String((e && e.message) || e || ''); } catch (e2) { msg = ''; }
+ try {
+ const sep = String.fromCharCode(10);
+ await Tools.Files.write(ERRORLOG, [
+ 'time=' + new Date().toISOString(),
+ 'fn=' + (fn && fn.name || '?'),
+ 'typeof=' + typeof e,
+ 'message_len=' + msg.length,
+ 'keys=' + (e && typeof e === 'object' ? Object.keys(e).join(',') : '-'),
+ 'message=' + msg.slice(0, 4000)
+ ].join(sep));
+ } catch (e3) { }
+ if (!msg) msg = 'backend error (empty message); see ' + ERRORLOG;
+ complete({ success: false, error: msg });
  }
  };
 }
-
 exports.make_pdf = wrap(make_pdf);
 exports.render_pdf_preview = wrap(render_pdf_preview);
 exports.list_pdf_themes = wrap(list_pdf_themes);
@@ -849,6 +888,9 @@ js = (JS.replace('__META__', json.dumps(meta, ensure_ascii=False, indent=2))
  .replace('__GNP__', base64.b64encode(gnp).decode('ascii'))
  .replace('__GNPVER__', gnpver)
  .replace('__XRY__', base64.b64encode(xry).decode('ascii'))
+ .replace('__CKIT__', base64.b64encode(ckit).decode('ascii'))
+ .replace('__OKL__', base64.b64encode(okl).decode('ascii'))
+ .replace('__ISRC__', base64.b64encode(isrc).decode('ascii'))
  .replace('__LIBS__', LIBS_B64))
 
 open(OUT, 'w', encoding='utf-8').write(js)
@@ -858,7 +900,8 @@ print('meta tools', len(meta['tools']))
 # ---- 真源指纹：方便和 runtime 比对，下次「改了不生效」一眼看出 ----
 import hashlib as _hl
 for _n in ('core.py', 'md2typst.py', 'theme2.typ', 'gen_package.py',
-           'mermaid.py', 'mermaid2.py', 'texmath.py', 'fxgen.py', 'qrgen.py', 'pdfxray.py'):
+           'mermaid.py', 'mermaid2.py', 'texmath.py', 'fxgen.py', 'qrgen.py', 'pdfxray.py',
+           'colorkit.py', 'oklch.py', 'imgsrc.py'):
     _p = os.path.join(LIB, _n)
     if os.path.exists(_p):
         print('src', _n, _hl.md5(open(_p, 'rb').read()).hexdigest()[:8])
