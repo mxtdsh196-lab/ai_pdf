@@ -52,6 +52,7 @@ def classify(msg):
         ('unclosed delimiter', 'syntax', 'Typst语法错误；优先删除 extra_typst'),
         ('expected', 'syntax', 'Typst语法错误；优先删除 extra_typst'),
         ('not found', 'missing_resource', '文件或字体找不到；图片用绝对路径，字体用 Noto Serif CJK SC'),
+        ('Not a PDF file', 'bad_input', '这个文件没有 PDF 文件头（只是后缀或纯文本）。先确认它真的是 PDF；需要转换用 images_to_pdf 或先用 WPS/浏览器导出'),
         # 参数错误之前全部落到 unknown，提示叫用户去查 extra_typst，完全误导。
         # 这些都是调用参数写错，与 extra_typst 无关。
         ('no valid pages', 'bad_argument', 'pages 超出页数范围：先调 pdf_info看 pages 总数，再取 1 到 总页码'),
@@ -101,6 +102,58 @@ def margin_typst(spec):
     if len(parts) ==3:
         return '(top: %s, right: %s, bottom: %s, left: %s)' % (parts[0], parts[1], parts[2], parts[1])
     return '(top: %s, right: %s, bottom: %s, left: %s)' % (parts[0], parts[1], parts[2], parts[3])
+
+
+PAPER_MM = {
+    'a4': (210.0, 297.0), 'a5': (148.0, 210.0), 'a3': (297.0, 420.0),
+    'us-letter': (215.9, 279.4), 'b5': (176.0, 250.0),
+    'presentation-16-9': (297.0, 167.06), 'presentation-4-3': (280.0, 210.0),
+}
+
+
+def _len_mm(v):
+    """把 15mm / 1.5cm / 0.8in / 12pt 转成 mm 数。"""
+    m = re.match(r'^([0-9]+(?:\.[0-9]+)?)(mm|cm|in|pt)?$', str(v).strip())
+    if not m:
+        return None
+    n = float(m.group(1))
+    u = m.group(2) or 'mm'
+    if u == 'cm':
+        return n * 10.0
+    if u == 'in':
+        return n * 25.4
+    if u == 'pt':
+        return n * 0.352778
+    return n
+
+
+def content_area(a, paper_type):
+    """算出真正的版心尺寸(mm)。collage 画布不能超过它，否则溢出页边。
+
+    slide 主题 margin=15mm，16:9 页面 297mm 宽 → 版心只有 267mm。
+    之前 collage 写 w=297 就直接向右溢出 15mm，pdf_lint 报 graphic_overflow。
+    """
+    pw, ph = PAPER_MM.get(paper_type, (210.0, 297.0))
+    # 用户没传 margin 时，要回退到主题默认值（slide=15mm / report=22mm20mm 等），
+    # 否则这里会当成 0 边距，版心算成整页，collage 限幅等于没做。
+    spec = str(a.get('margin') or '')
+    if not spec:
+        _th = str(a.get('theme') or 'report').lower()
+        _t = THEMES.get(_th) or THEMES['report']
+        spec = str(_t.get('margin') or '')
+    parts = re.findall(r'[0-9]+(?:\.[0-9]+)?(?:mm|cm|in|pt)', spec)
+    if not parts:
+        return pw, ph
+    v = [_len_mm(x) for x in parts]
+    v = [x for x in v if x is not None]
+    if not v:
+        return pw, ph
+    # Typst 的四边距 tuple 顺序是 top right bottom left
+    if len(v) == 1:
+        my = mx = v[0]
+    else:
+        my, mx = v[0], v[1]
+    return max(1.0, pw - 2.0 * mx), max(1.0, ph - 2.0 * my)
 
 
 def font_paths(a):
@@ -394,6 +447,15 @@ def cmd_build(a):
             if _r.returncode != 0:
                 err('HTML 转换失败：%s' % (_r.stderr or '')[:300])
             md = _r.stdout
+        # 先告诉 md2typst 版心尺寸，collage 才能把画布限幅。
+        try:
+            _th = str(a.get('theme') or 'report').lower()
+            _ps2 = (a.get('page_size') or ('16-9' if _th == 'slide' else 'a4')).lower()
+            _paper2 = PAPER.get(_ps2, 'presentation-16-9' if _th == 'slide' else 'a4')
+            _cw_mm, _ch_mm = content_area(a, _paper2)
+            md2typst.set_ctx(content_w=_cw_mm, content_h=_ch_mm)
+        except Exception:
+            pass
         body, warn = md2typst.convert_checked(md)
     except Exception as e:
         err('markdown conversion failed: %s' % e)
@@ -458,9 +520,66 @@ def cmd_build(a):
     for w in warn + PARAM_WARN:
         if w not in allw:
             allw.append(w)
+
+    # ---- 自动版式自检 ----
+    # 工具能查出问题不等于 AI 会去查。这里生成后立即跑一遍 pdfxray.anomalies，
+    # 把结果直接塞进 warnings——AI 下次读返回值就会看到，不需要“记得”调 pdf_xray。
+    _anom = []
+    try:
+        import pdfxray
+        fitz = get_fitz()
+        dd = fitz.open(outpath)
+        # anomalies() 接收的是「单页对象」，传 Document 会 AttributeError 被静默吞掉
+        for _pno in range(dd.page_count):
+            try:
+                _anom.extend(pdfxray.anomalies(dd[_pno], tol=1.0) or [])
+            except Exception:
+                pass
+        dd.close()
+    except Exception:
+        _anom = []
+    if _anom:
+        _kind_cn = {
+            'cross_border': '文字压穿边框',
+            'out_of_page': '内容超出页面',
+            'overlap': '文字互相重叠',
+            'image_over_text': '图片压住文字',
+            'image_overlap': '图片互相重叠',
+        }
+        _by_kind = {}
+        for _k, _r, _msg in _anom:
+            _by_kind.setdefault(_k, []).append(_msg)
+        for _k, _ms in _by_kind.items():
+            _cn = _kind_cn.get(_k, _k)
+            allw.append("【版式问题·%s】%d 处：%s" % (_cn, len(_ms), _ms[0][:90]))
+        allw.append("排版自检共发现 %d 处问题，请调 pdf_xray(detail='brief') 看全量，"
+                    "修完再交付" % len(_anom))
+
+    # ---- 体积检查 ----
+    # collage 的照片裁剪默认走 PIL 预裁（300dpi 封顶 1800px），一般不会胀。
+    # 但传入 gs_compress=false 的大图、或大量 fx noise 栅格图，很容易悄悄到几 MB。
+    _sz_mb = os.path.getsize(outpath) / 1048576.0
+    _npng = 0
+    try:
+        _d2 = get_fitz().open(outpath)
+        for _p in _d2:
+            for _im in _p.get_images(full=True):
+                _npng += 1
+        _d2.close()
+    except Exception:
+        pass
+    if _sz_mb >= 3.0:
+        allw.append("【体积】%.1f MB（%d 个内嵌图），超过 3 MB。"
+                    "大图先在外部压到 1600px 再放；纯色块/渐变优先用 Typst 原生，不要用栅格图"
+                    % (_sz_mb, _npng))
+    elif _sz_mb >= 1.5:
+        allw.append("【体积】%.1f MB（%d 个内嵌图），偏大。可用 compress_pdf 或先压图片"
+                    % (_sz_mb, _npng))
+
     out(output=outpath, bytes=os.path.getsize(outpath), pages=pages,
         theme=pick_theme(a), palette=pal, engine='typst',
-        warnings=allw if allw else None)
+        warnings=allw if allw else None,
+        layout_check='%d 处问题' % len(_anom) if _anom else 'clean')
 
 
 def cmd_preview(a):
@@ -486,11 +605,27 @@ def cmd_preview(a):
     out(total_pages=total, rendered=files)
 
 
+def _looks_like_pdf(path):
+    """按文件头判断是不是 PDF。
+    ★ PyMuPDF 能把纯文本当 PDF 打开（metadata.format 会是 'Text'，
+    1 页 400x600pt），于是「文件存在 + file_size 有值」的校验会被绕过，
+    Ghostscript 随后会把它转成一个空白 PDF 还返回成功（实测 2218 字节）。
+    所以必须在入口按魔数 '/'+'PDF-' 判死，不能只信 open() 成功。"""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(1024)
+    except Exception:
+        return False
+    return b'%PDF-' in head[:1024]
+
+
 def cmd_info(a):
     pdf = a['pdf']
     fitz = get_fitz()
     if not os.path.exists(pdf):
         err('PDF not found: %s' % pdf)
+    if not _looks_like_pdf(pdf):
+        err('Not a PDF file (no PDF header): ' + str(pdf))
     doc = fitz.open(pdf)
     r = doc[0].rect
     w, h = r.width, r.height
@@ -753,11 +888,14 @@ def cmd_lint(a):
         _lines = [ln.strip() for ln in text.split(chr(10)) if ln.strip()]
         _body = [ln for ln in _lines
                  if not (ln.replace(' ', '').replace('/', '').isdigit())
-                 and len(ln) > 3]
+                 and len(ln) > 1]
         # 只判「有没有字」会漏掉「标题被挤到新页」的近似空白页。
-        # 去掉页码后整页正文不足 12 个字符、且没有图和实质图形，也算空白。
+        # 去掉页码后整页正文不足 4 个字符、且没有图和实质图形，也算空白。
+        # len(ln)>1 而不是 >3：「正文。」这种 3 字的正常行不能被当页码剔掉。
+        # 阈值从 12 降到 4：一页正常的短文档（如「单页测试 / 正文。」）实测只算出 4 字
+        # 会被 12 误报成 blank_page。而真正的废页（标题被挤到新页）通常只剩 0~4 字。
         _chars = sum(len(ln) for ln in _body)
-        if _chars < 12 and nimg == 0 and ndraw <= 2:
+        if _chars < 4 and nimg == 0 and ndraw <= 2:
             issues.append(dict(page=pno, kind='blank_page', level='error',
                                msg='近似空白页：整页只有 %d 个字符（多半是标题被挤到新页）' % _chars,
                                fix='检查是否多写了 ::: pagebreak，或该节内容为空'))
