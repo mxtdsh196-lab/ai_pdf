@@ -2,14 +2,15 @@
 
 **给 AI 用的中文 PDF 排版包。只写 Markdown，排版正确性由转换器保证。** 引擎 Typst，3 页文档 0.6–1 秒。
 
-> 核心设计原则：**不让模型写 Typst**。Typst 的括号与模式对 LLM 太脆弱，输入锁死在 Markdown，转换器承担全部语法正确性。
+> 核心设计原则：**默认不让模型写 Typst**。Typst 的括号与模式对 LLM 太脆弱，输入锁死在 Markdown，转换器承担全部语法正确性。
 
 ---
 
 ## 亮点
 
-- **23 个工具**：生成、体检、拆分、合并、加密、水印、字体检查、批量生成
+- **24 个工具**：生成、体检、拆分、合并、加密、水印、字体检查、批量生成
 - **7 个版式 + 6 套配色**，含 16:9 **PPT 幻灯片**（8 种预设版式）
+- **学科图形**：函数图、立体几何、化学结构式（SMILES一行出苯环）、流程图，12个 Typst包已内置，离线可用
 - **26 类内容组件**：KPI 卡、进度条、环形进度、时间线、对比栏、定义表、发票、证书、简历、菜单、海报……
 - **统一样式系统**：`style` / `radius` / `tone` 三个词控制阴影、玻璃、渐变、描边
 - **特效层**：泛光、磨砂、噪点、流体渐变、自定义曲线（**SVG 只做装饰，文字仍可搜索**）
@@ -359,6 +360,56 @@ vtext|色阶与竖排|0,0|24,90|pos=right-top pad=14 size=13 cols=1 gap=4
 不传的话 collage 会把用户写的 `w` 直接当画布大小，等于默认 `margin=0`，超出版心就向右溢出。这个 bug 表现为 `pdf_lint` 报 `graphic_overflow` 右 15mm。
 
 ⚠️ `a['margin']` 为空时必须回退到**主题默认值**（`THEMES[theme]['margin']`），否则版心算成整页，限幅等于没做。注意主题表叫 `THEMES`，`THEME` 是 theme2.typ 的文件路径（str）。
+
+---
+
+##  学科图形（v2.4）
+
+数学的函数图、立体几何，化学的结构式和方程式，以及流程图、框图、网络拓扑，都不靠新工具，用一个 `::: draw`直接嵌 Typst代码。
+
+为什么不做成参数化工具：这些东西本质是「按数学定义画线」，不是「调旋钮」。写 `x => x*x/2`就是抛物线，包成 `parabola(a=0.5)`反而画不了「椭圆+焦点+准线+切线」这种组合。
+
+### 写法
+
+三条硬约束：
+
+1. `::: draw`独占一行，**后面不能带参数**（pandoc不认 `::: name k=v`）
+2.代码块前后**必须空行**，否则不被识别成 fenced div
+3.内层必须是代码块，代码原样插入，不转义不解析
+
+### 内置12个包
+
+|包 |干什么 |
+|---|---|
+| cetz0.5.3 /0.5.2 |绘图底座，API取法 TikZ |
+| cetz-plot0.1.4 |函数图（带坐标轴、刻度、图例） |
+| cetz-venn0.2.0 |韦恩图 |
+| cetz-fields0.2.0 |向量场、库仑场 |
+| fletcher0.6.0 |流程图、框图、网络拓扑 |
+| molchemist0.1.6 |化学结构式，写 SMILES就出图 |
+| alchemist0.2.0 |骨架式低层控制 |
+| chemformula0.1.3 |化学方程式 |
+| ezchem / physica / oxifmt / tidy |辅助 |
+
+全部塞在 `ai_pdf.js`里（gzip+b64，267文件含4个 WASM），首次调用自动解包到 `typst-packages/`，**不联网也能用**。
+
+### 三个例子
+
+**苯环**（SMILES，不用算坐标）：`#render-smiles("c1ccccc1", skeletal: true)`。不加 `skeletal: true`会画出全部氢，中学要骨架式。
+
+**函数图**：`#import "@preview/cetz-plot:0.1.4": plot`然后 `plot.add((x => x*x-1), domain: (-3,3), style: (stroke: red+1pt))`。
+
+**流程图**（国标符号）：起止框 `corner-radius:8pt`，处理框 `corner-radius:2pt`，判断框 `shape: "diamond"`，输入输出 `shape: "parallelogram"`，箭头 `edge((0,0),(0,1), "->", label: [是])`。
+
+### 容易踩的坑
+
+- `plot.add`的数据是**位置参数**，写 `data:`报错
+-线型写 `style: (stroke: red+1pt)`，直接 `stroke:`报错
+-本机没有 `calc.rad`，弧度用 `x*calc.pi/180`
+- `ortho` / `perspective`是**包裹式**：`ortho(x:..., y:..., z:..., {绘图代码})`
+- `fletcher`矩形框用 `corner-radius`，写 `radius`会缩成字中间一个小圈
+- `fletcher`的 `shape:`传**字符串**，不是函数
+- `fletcher`必须给 `fill: white`，否则连线穿过节点文字
 
 ---
 
