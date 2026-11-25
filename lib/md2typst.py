@@ -259,6 +259,18 @@ def _fix_hr(md):
 def preprocess(md):
     md = _fix_hr(md)
     # ============================================================
+    # ::: draw / ::: typst 块保护。必须先于下面「给 Markdown 标题补空格」
+    # 的正则，否则 Typst 代码里的 #import 会被改成 "# import" 导致语法失败。
+    # 原代码只保护 ```{=typst} 围栏，普通 ```typ 仍会被改。
+    # 做法：整块换 PUA 占位符，最后还原成 {=typst} RawBlock 交给 _div。
+    # ============================================================
+    _draws = []
+    def _stash_draw(mm):
+        _draws.append(mm.group(1))
+        return chr(0xE002) + str(len(_draws) - 1) + chr(0xE003)
+    md = _re.sub(r"(?ms)^:::\s*(?:draw|typst)[ \t]*\n(.*?)^:::[ \t]*$",
+                 _stash_draw, md)
+    # ============================================================
     # HTML 组件块保护。
     # PANDOC_FROM 带 fenced_divs，<div class="kpis"> 会被解析成 Div 块而不是
     # RawBlock，于是 _raw_html() 里的 kpis/badges/page-break 处理全成死代码，
@@ -376,6 +388,16 @@ def preprocess(md):
             parts.append("%s=%s" % (k, _quote_v(v)))
         out.append("::: {%s}" % " ".join(parts))
     res = "\n".join(out)
+    # 还原 draw 块：内部转成 {=typst}，交给 _div 原样输出
+    def _unstash_draw(mm):
+        i = int(mm.group(1))
+        _b = _draws[i]
+        m2 = _re.search(r"(?ms)^```(?:typ|typst)?[ \t]*\n(.*?)^```[ \t]*$", _b)
+        _code = m2.group(1) if m2 else _b
+        return (chr(10) + "::: {.draw}" + chr(10) + chr(10) + "```{=typst}"
+                + chr(10) + _code.rstrip() + chr(10) + "```" + chr(10) + chr(10)
+                + ":::" + chr(10))
+    res = _re.sub(chr(0xE002) + r"(\d+)" + chr(0xE003), _unstash_draw, res)
     # fenced div 内部：heading 前必须有空行，否则 pandoc 把它当续行文本
     _l2 = res.split("\n")
     _fin = []
@@ -1258,7 +1280,15 @@ class R:
                             "已自动等比缩到 %.1fx%.1fmm（图形和字号一起缩）。"
                             "建议直接把 w/h 写成版心尺寸"
                             % (_raw_w, _raw_h, _lim_w or 0, _lim_h or 0, cw, ch))
-        bgc = (kvs.get("bg") or "").strip().lstrip("#")
+        _bgraw = (kvs.get("bg") or "").strip().lstrip("#")
+        # 画布底色也允许写角色名（bg=paper / bg=pale）。
+        # 之前只认十六进制，写 bg=paper 会被当成无效颜色丢掉，整页变白。
+        if _bgraw and _pbase and _bgraw.lower() in ("deep", "mid", "veil", "soft",
+                                                    "pale", "paper", "ink", "accent"):
+            _bgr = _ramp_get(_bgraw, _pbase)
+            if _bgr:
+                _bgraw = _bgr
+        bgc = _bgraw
 
         def _anchor(a, wmm, hmm, pad):
             """pos=right-top 这种锚点算成 x,y（工具算，不让 AI 手算）。"""
@@ -1297,11 +1327,24 @@ class R:
                 return ("M%.2f,0.00 L%.2f,0.00 L%.2f,%.2f L0.00,%.2f L0.00,%.2f "
                         "Q0.00,0.00 %.2f,0.00 Z" % (rx, W, W, H, H, ry, rx))
             if shp in ("arc4", "round", "rounded"):
-                return ("M%.2f,0.00 L%.2f,0.00 Q%.2f,0.00 %.2f,%.2f L%.2f,%.2f "
-                        "Q%.2f,%.2f %.2f,%.2f L%.2f,%.2f Q0.00,%.2f 0.00,%.2f "
-                        "L0.00,%.2f Q0.00,0.00 %.2f,0.00 Z"
-                        % (rx, W - rx, W, W, ry, W, H - ry, W, H, W - rx, H,
-                           rx, H, H - ry, H - ry, rx))
+                # 四角圆角矩形。逆时针起点在左上角外圆角末点，顺时针一圈。
+                # 用逐段拼接 + 显式取值，不再用 %% 占位符：
+                # 旧版就是占位符数与参数数不匹配（16 vs 17），一用就 TypeError。
+                segs = (
+                    ("M", (rx, 0.0)),
+                    ("L", (W - rx, 0.0)),
+                    ("Q", (W, 0.0, W, ry)),
+                    ("L", (W, H - ry)),
+                    ("Q", (W, H, W - rx, H)),
+                    ("L", (rx, H)),
+                    ("Q", (0.0, H, 0.0, H - ry)),
+                    ("L", (0.0, ry)),
+                    ("Q", (0.0, 0.0, rx, 0.0)),
+                )
+                out = []
+                for cmd, nums in segs:
+                    out.append(cmd + " ".join("%.2f" % v for v in nums))
+                return " ".join(out) + " Z"
             if shp in ("slant", "bevel"):
                 return "M0.00,0.00 L%.2f,0.00 L%.2f,%.2f L0.00,%.2f Z" % (W - rx * 1.6, W, H, H)
             if shp in ("notch", "cut"):
@@ -1564,6 +1607,14 @@ class R:
                     _canvas = bgc if bgc else (CTX.get("canvas_bg") or "FFFFFF")
                 if _craw2 is None:
                     colv = _auto_fg(_canvas)
+                elif _pbase and str(_craw2).lower() in _ROLES:
+                    # 角色名（color=accent / color=soft ...）
+                    _rv = _ramp_get(_craw2, _pbase)
+                    if _rv:
+                        colv = _col(_rv, "1A1A1A")
+                        _craw2 = _rv
+                    else:
+                        colv = _col(_craw2, "1A1A1A")
                 else:
                     colv = _col(_craw2, "1A1A1A")
                     _f2 = _contrast_warn("text", _craw2.lstrip("#"), _canvas)
@@ -1584,10 +1635,16 @@ class R:
                 if track:
                     opts.append("tracking: %.3fem" % (track / 100.0))
                 wp = "width: %.3fmm" % wmm if wmm else ""
-                layers.append("%s[#block(%s)[#set par(leading: %.2fem, justify: false)%s"
-                              "#text(%s)[#align(%s)[%s]]]]"
-                              % (base, wp, lh, NL, ", ".join(opts), align, esc(content.replace("<br>", chr(92)))
-                              ))
+                # ★ skew= 伪造斜体。中文没有 italic 变体（实测 font=
+                #   "Noto Serif CJK SC" + style:"italic" 仍回退 Regular，
+                #   PDF 字体名不变），只能用 #skew 做倾斜变换。
+                #   skew=14 即 -14deg（正值=立向右倾），与 italic 可叠加。
+                _sk = _f(_kv(extra, "skew"), 0.0)
+                _inner = "#text(%s)[#align(%s)[%s]]" % (                    ", ".join(opts), align, esc(content.replace("<br>", chr(92))))
+                if _sk:
+                    _inner = "#skew(ax: -%.1fdeg)[%s]" % (abs(_sk), _inner)
+                layers.append("%s[#block(%s)[#set par(leading: %.2fem, justify: false)%s%s]]"
+                              % (base, wp, lh, NL, _inner))
 
             elif kind in ("block", "panel", "box"):
                 s4 = str(size).strip()
@@ -1693,14 +1750,18 @@ class R:
                 gap = _f(_kv(extra, "gap"), 3.0)
                 # 没写 color 就按画布底色自动选；写了就查对比度
                 _craw2 = _kv(extra, "color")
-                _canvas = bgc if bgc else (CTX.get("canvas_bg") or "FFFFFF")
+                # bg= 指定这段竖排压在哪层上。压在照片上时必须显式给，
+                # 否则会按画布底色选字色，出黑字压雪山 = 完全看不见。
+                _vtbg = str(_kv(extra, "bg") or "").strip().lstrip("#")
+                _canvas = _vtbg if _vtbg else (bgc if bgc else (CTX.get("canvas_bg") or "FFFFFF"))
                 if _craw2 is None:
                     colv = _auto_fg(_canvas)
                 else:
                     colv = _col(_craw2, "1A1A1A")
-                    _f2 = _contrast_warn("text", _craw2.lstrip("#"), _canvas)
+                    _f2 = _contrast_warn("vtext", _craw2.lstrip("#"), _canvas)
+                    # _contrast_warn 返回裸十六进制，必须再过 _col 才是 Typst 表达式
                     if _f2 != ("#" + _craw2.lstrip("#")):
-                        colv = _f2
+                        colv = _col(_f2, "1A1A1A")
                 vfnt = _kv(extra, "font")
                 vcols = int(_f(_kv(extra, "cols"), 1) or 1)
                 vcols = max(1, min(8, vcols))
@@ -2041,8 +2102,43 @@ class R:
                 k == "line" for k, _p, _l in self._lines(inner or []))):
             WARNINGS.append("组件 ::: %s 里没有任何数据行，渲染出来会是空块" % name)
 
-        # block font: ::: font-Cinzel ... :::
-        if name.startswith("font-") or name.startswith("f-"):
+        # ::: draw / ::: typst —— 在正文里嵌任意 Typst 代码（数学/物理/化学图形用）
+        # 参数化图层表达不了椭圆、苯环、流程图这类东西，必须给自由代码口子。
+        # 用法：
+        #   ::: draw
+        #
+        #   ```typ
+        #   #cetz.canvas({ ... })
+        #   ```
+        #
+        #   :::
+        # ★ 注意：::: draw 后面不要写属性（pandoc 不接受 ::: name k=v 形式），
+        #   需要控制高度就写 ::: draw 然后在代码里用 #block(height: 60mm)[...]。
+        #   ★ 代码块前后必须有空行，否则 pandoc 不把它当 fenced div。
+        # 内层代码原样插入，不转义、不解析。
+        if name in ("draw", "typst"):
+            _src = None
+            for _b in (inner or []):
+                if not isinstance(_b, dict):
+                    continue
+                _bt = _b.get("t")
+                _c = _b.get("c") or []
+                # preprocess 把 ::: draw 内部转成了 ```{=typst}，pandoc 会给 RawBlock
+                if _bt == "RawBlock" and len(_c) >= 2:
+                    _src = _c[1]
+                    break
+                if _bt == "CodeBlock" and len(_c) >= 2:
+                    _src = _c[1]
+                    break
+            if _src is None:
+                WARNINGS.append(
+                    "::: %s 里没找到代码块。正确写法：单独一行 ::: %s，空一行，"
+                    "再写 ```typ 包住代码，再空一行，最后单独一行 :::" % (name, name))
+                self.o.append(chr(10))
+            else:
+                self.o.append(_src.strip() + chr(10) + chr(10))
+                # block font: ::: font-Cinzel ... :::
+        elif name.startswith("font-") or name.startswith("f-"):
             _fam = name.split("-", 1)[1].replace("_", " ")
             _subd = R()
             _subd.render(inner)
