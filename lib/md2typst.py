@@ -1595,13 +1595,10 @@ class R:
                 fsize = _f(_kv(extra, "size"), 9.0)
                 weight = (_kv(extra, "weight") or "regular").strip()
                 # 没写 color 就按画布底色自动选；写了就查对比度
-                if not _has_bgimg:
-                    _craw2 = _kv(extra, "color")
+                _craw2 = _kv(extra, "color")
                 # 画布是背景照片时（bgimg），文字压在照片上，亮度不可预知。
                 # 这里不再做对比度检查，直接默认白字（照片排版惯用）。
                 if _has_bgimg:
-                    colv = 'rgb("#FFFFFF")'
-                    _craw2 = None
                     _canvas = "000000"
                 else:
                     _canvas = bgc if bgc else (CTX.get("canvas_bg") or "FFFFFF")
@@ -1617,9 +1614,11 @@ class R:
                         colv = _col(_craw2, "1A1A1A")
                 else:
                     colv = _col(_craw2, "1A1A1A")
-                    _f2 = _contrast_warn("text", _craw2.lstrip("#"), _canvas)
-                    if str(_f2).lstrip("#").upper() != _craw2.lstrip("#").upper():
-                        colv = _col(_f2, "1A1A1A")
+                    # 压背景照片时照片亮度不可预知，对比度判断没有意义
+                    if not _has_bgimg:
+                        _f2 = _contrast_warn("text", _craw2.lstrip("#"), _canvas)
+                        if str(_f2).lstrip("#").upper() != _craw2.lstrip("#").upper():
+                            colv = _col(_f2, "1A1A1A")
                 ital = (_kv(extra, "italic") or "").lower() in ("1", "true", "yes")
                 lh = _f(_kv(extra, "leading"), 1.4)
                 align = (_kv(extra, "align") or "left").strip()
@@ -2095,7 +2094,7 @@ class R:
 
         # 空组件：有 ::: xxx 但没有内容，几乎肯定是忘写数据行
         _EMPTY_OK = ("pagebreak", "toc", "no-break", "nobreak",
-                     "fx", "effect", "noise", "wave")
+                     "fx", "effect", "noise", "wave", "draw", "typst")
         # 头部带同行文字的组件（::: capsule 标题 / ::: qrcode 网址）不算空块
         _has_head = bool(self._head_text(cls, kvs, skip=1))
         if (name and name not in _EMPTY_OK and not _has_head and not any(

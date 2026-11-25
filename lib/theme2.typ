@@ -151,7 +151,7 @@
 // ---------- 页面 ----------
 #set page(
   paper: cfg.paper,
-  margin: if cfg.slide { (x: 15mm, y: 0mm) } else { cfg.margin },
+  margin: cfg.margin,
   numbering: none,
   header: if cfg.header-text == "" { none } else {
     align(right)[#text(font: hf, size: 8pt, fill: rgb("#B0B7C3"))[#cfg.header-text]]
@@ -177,15 +177,18 @@
 #set block(spacing:0pt)
 #show math.equation.where(block: true): it => block(above: 0.85em, below: 0.85em)[#it]
 
+// page.margin 可能是单个 length，也可能是四边 tuple；取左边距统一走这个
+#let _pg-ml(m) = if type(m) == dictionary { m.left } else { m }
+
 // ---------- 标题 ----------
 #show heading.where(level: 1): it => {
   if cfg.slide {
     // 幻灯片模式：每个 H1 = 新一页，页眉色条横贯整页
     pagebreak(weak: true)
-    // margin 已由 set page 设为 (x:15mm, y:0)，这里用负偏移让色条贴到纸边
-    place(top + left, dx: -15mm, dy: 0pt,
-      block(width: 297mm, height: 20mm, fill: accent)[
-        #place(left + bottom, dx: 15mm, dy: -6.5mm)[
+    // margin 现在跟随 cfg.margin（用户可覆盖），负偏移量用实际左边距算
+    context place(top + left, dx: -_pg-ml(page.margin), dy: 0pt,
+      block(width: page.width, height: 20mm, fill: accent)[
+        #place(left + bottom, dx: _pg-ml(page.margin), dy: -6.5mm)[
           #text(font: hf, size: 20pt, weight: "bold", fill: white)[#it.body]
         ]
       ])

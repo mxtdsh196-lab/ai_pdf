@@ -22,7 +22,7 @@ THEMES = {
     'editorial': dict(bf='Noto Serif CJK SC', hf='LXGW WenKai', margin='24mm22mm', size='11pt', leading='0.80em', h1='20pt', h2='15pt', h3='12.5pt', h4='11pt', h1fill='false', h1bar='true'),
     'minimal': dict(bf='Noto Sans CJK SC', hf='Noto Sans CJK SC', margin='25mm24mm', size='10.5pt', leading='0.70em', h1='18pt', h2='13.5pt', h3='11.5pt', h4='10.5pt', h1fill='false', h1bar='false'),
     'certificate': dict(bf='LXGW WenKai', hf='LXGW WenKai', margin='45mm32mm', size='13pt', leading='0.95em', h1='30pt', h2='18pt', h3='14pt', h4='12pt', h1fill='false', h1bar='false'),
-    'slide': dict(bf='Noto Sans CJK SC', hf='Noto Sans CJK SC', margin='15mm', size='13pt', leading='0.74em', h1='20pt', h2='14pt', h3='12pt', h4='11pt', h1fill='false', h1bar='false'),
+    'slide': dict(bf='Noto Sans CJK SC', hf='Noto Sans CJK SC', margin='0mm15mm', size='13pt', leading='0.74em', h1='20pt', h2='14pt', h3='12pt', h4='11pt', h1fill='false', h1bar='false'),
 }
 
 PKG_DIR = os.path.join(HERE, 'typst-packages')

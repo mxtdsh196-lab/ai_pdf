@@ -278,22 +278,15 @@ def effects(p):
     strokes = [s for s in shapes if s['kind'] == 'stroke']
 
     # --- 噪点 / 任何栅格图 ---
-    for im in p.get_images(full=True):
-        xref = im[0]
-        try:
-            info = p.parent.extract_image(xref)
-        except Exception:
-            continue
-        w, h = info.get('width', 0), info.get('height', 0)
-        # 找该图的放置矩形
-        rect = None
-        for kind, bb in p.get_bboxlog():
-            if kind == 'fill-image':
-                rect = pymupdf.Rect(*bb)
-                break
-        out.append({'kind': 'image', 'rect': rect or pymupdf.Rect(0, 0, pw, ph),
-                    'detail': '内嵌位图 %dx%d %s（噪点纹理/栅格化磨砂多为此类）'
-                              % (w, h, info.get('ext', '?'))})
+    # 用 get_image_info() 而不是 get_images()：前者是「每次放置」，后者是去重后的 XObject。
+    # 实测同一张图放两次，get_images 只回 1 个，用它会漏报；旧实现还固定取第一个
+    # fill-image 的 bbox，所有图片都报成同一位置。
+    for _ii in p.get_image_info():
+        _r = pymupdf.Rect(_ii['bbox'])
+        _w, _h = _ii.get('width', 0), _ii.get('height', 0)
+        _ext = _ii.get('cs-name', '?')
+        out.append({'kind': 'image', 'rect': _r,
+                    'detail': '内嵌位图 %dx%d %s（噪点纹理/栅格化磨砂多为此类）' % (_w, _h, _ext)})
 
     # --- 阴影：两个近似同尺寸块，一个偏移且颜色更深 ---
     # 实测 typst 的 shadowed 是「外扩一圈的底色块」+「卡片块」，
