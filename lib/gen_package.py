@@ -3,6 +3,7 @@
 #生成 ai_pdf v2（Typst引擎）沙盒包
 import base64, hashlib, io, json, os
 import collage_doc
+import subject_doc
 
 # ============================================================
 # ai_pdf 唯一打包入口（真源 = .typst_test/lib）
@@ -134,6 +135,7 @@ COMPONENTS = (
  '::: toc （自动目录，空内容）'
  '''
 ''' + collage_doc.COLLAGE_DOC + '''
+''' + subject_doc.SUBJECT_DOC + '''
 '''
  '**每个 ::: 必须配对闭合**：开头 ::: progress 换行写数据，结尾单独一行 :::。漏了闭合后面全乱。'
  '行内：[重点]{.badge .primary}徽章；==高亮==荧光标记。'
@@ -248,7 +250,7 @@ tools.append({
 
 tools.append({
  'name': 'pdf_lint',
- 'description': {'zh': '程序化版式体检：查空白页、文字溢出页边界、贴边、图片分辨率过低、页面尺寸不一致、字体未嵌入。比人眼看图更靠谱，交付前跑一次。注意：只查几何与字体，不查内容完整性——组件被压穿、元素重叠、文字被裁、豆腐块都可能 0 errors，仍需看图确认。',
+ 'description': {'zh': '程序化版式体检：查空白页、文字溢出页边界、贴边、图片分辨率过低、页面尺寸不一致、字体未嵌入。比人眼看图更靠谱，交付前跑一次。注意：只查几何与字体，不查内容完整性——组件被压穿、元素重叠、文字被裁、豆腐块都可能 0 errors，仍需看图确认。【查不出对比度】白字压浅色云海只有 1.9:1，本工具报 0 errors 但人眼看不清。要验可读性：渲染 PNG 后取字内像素 RGB 众数算 WCAG 对比度（≥4.5）。根治是「浅色半透明条+深色字」，不要白字硬压图。详见 pdfxray.py 顶部注释。',
   'en': 'Programmatic layout lint: blank pages, text overflow, near-edge, low-DPI images, page size mismatch, non-embedded fonts. Geometry/font checks only, NOT content integrity — overlaps, clipping, tofu boxes can still pass with 0 errors; inspect the rendered page.'},
  'parameters': [
   {'name': 'pdf_path', 'description': {'zh': 'PDF 路径', 'en': 'PDF 路径'}, 'type': 'string', 'required': True},
@@ -257,7 +259,7 @@ tools.append({
  ]})
 tools.append({
  'name': 'pdf_xray',
- 'description': {'zh': '把 PDF 解析成你能直接读的结构，不用看图。每页给出三块：① 布局字符画（形状画边框、文字显示原字，坐标就是真实坐标）② 可疑项（文字跨越边框/文字重叠/出界/豆腐块，带精确 pt 数）③ 特效清单（阴影偏移量、磨砂透明度、泛光描边透明度、渐变处数、噪点图尺寸、曲线路径）+ 逐元素坐标/尺寸/颜色/字号。用来回答「我写的东西放出来长什么样」：卡片有没有压边框、两列间距多少、颜色有没有生效、阴影多重。注意它读的是几何与绘制指令，看不到「好不好看」，审美仍需人判断。',
+ 'description': {'zh': '把 PDF 解析成你能直接读的结构，不用看图。每页给出三块：① 布局字符画（形状画边框、文字显示原字，坐标就是真实坐标）② 可疑项（文字跨越边框/文字重叠/出界/豆腐块，带精确 pt 数）③ 特效清单（阴影偏移量、磨砂透明度、泛光描边透明度、渐变处数、噪点图尺寸、曲线路径）+ 逐元素坐标/尺寸/颜色/字号。用来回答「我写的东西放出来长什么样」：卡片有没有压边框、两列间距多少、颜色有没有生效、阴影多重。注意它读的是几何与绘制指令，看不到「好不好看」，审美仍需人判断。【量坐标前必读】① dot/ring 的 size 是半径不是直径；② img 带 shape= 时图像 bbox 是裁切前尺寸（声明 70mm 实测 121mm），不能拿来判重叠；③ alpha 是透明度百分比（0=不透明）；④ block 高度由内容自动撑开，要接元素先拿本工具量真实 bbox；⑤ 中文字体无 italic，用 skew=。完整 13 条见 pdfxray.py 顶部注释。',
   'en': 'Parse a PDF into structure you can read directly, no image recognition. Per page: (1) layout ASCII art (shapes as borders, real text at real coordinates) (2) anomalies with exact pt values (text crossing a border / overlapping text / out of page / tofu) (3) effects inventory (shadow offset, frost opacity, glow stroke opacity, gradient count, noise bitmap size, curve paths) plus per-element bbox/color/size. Answers "what does my markup actually render as": did text cross a card border, how wide is the gutter, did my color apply, how heavy is the shadow. It reads geometry and draw ops only — aesthetics still need a human.'},
  'parameters': [
   {'name': 'pdf_path', 'description': {'zh': 'PDF 路径', 'en': 'PDF path'}, 'type': 'string', 'required': True},
@@ -370,13 +372,17 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.3.0',
+ 'version': '2.4.0',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
- 'zh': ('【AI生成 PDF·做PDF就用本包】Markdown一步转中文精排 PDF。真圆角卡片、渐变表头、胶囊徽章、KPI数据卡、进度条、评分、横条图、时间线、步骤、定义表、对比双栏、六色提示框、封面页、页眉页脚、水印，字号/行距/边距/字体全可调。'
- '引擎为 Typst原生二进制，一份3页文档约1秒；纯 Markdown输入，排版正确性由转换器保证。'
- '含自检预览、合并、拆分、抽取页、旋转、压缩、图片转 PDF、文字提取。'),
- 'en': 'Use this package for ANY PDF creation. Markdown to typeset Chinese PDF with rounded cards, gradient table headers, pill badges, KPI cards, progress bars, ratings, bar charts, timelines, steps, definition lists, compare columns,6-color callouts, cover page, headers/footers, watermark; fonts/sizes/margins tunable. Typst engine (~1s per3-page doc). Includes preview, merge, split, extract, rotate, compress, images-to-PDF, text extraction.'},
+ 'zh': ('写 Markdown出可打印的中文排版 PDF，Typst引擎。'
+ '主题、配色、字号、边距、字体全可调，也支持整页自由拼贴；'
+ '函数图、化学结构式、流程图用 ::: draw写 Typst，所需包已内置。'
+ '自带 lint、xray、预览三种自检。'),
+ 'en': 'Markdown in, print-ready Chinese PDF out, powered by Typst. '
+ 'Theme, palette, size, margin and font all tunable; full-page free collage supported. '
+ 'Math plots, chemical structures and flowcharts via ::: draw, with needed packages bundled. '
+ 'Includes lint, xray and preview self-checks.'},
  'enabledByDefault': True,
  'category': 'File',
  'author': ['Operit'],
@@ -468,19 +474,28 @@ const PKG_DIR = RUNTIME + '/typst-packages';
 async function unpackLibs() {
   const PY = [
     'import base64,gzip,json,os,sys',
-    'b64=sys.argv[1]; dst=sys.argv[2]',
+    'src=sys.argv[1]; dst=sys.argv[2]',
+    // b64 有 2MB，作为命令行参数会超 ARG_MAX 报 126，必须从文件读
+    'b64=open(src,"r").read().strip()',
     'd=json.loads(gzip.decompress(base64.b64decode(b64)).decode("utf-8"))',
     'n=0',
-    'for rel,txt in d.items():',
+    'for rel,v in d.items():',
     '    p=os.path.join(dst,rel)',
     '    os.makedirs(os.path.dirname(p),exist_ok=True)',
-    '    open(p,"w",encoding="utf-8").write(txt); n+=1',
+    '    if isinstance(v,dict):',
+    '        open(p,"wb").write(base64.b64decode(v["b64"]))',
+    '    else:',
+    '        open(p,"w",encoding="utf-8").write(v)',
+    '    n+=1',
     'print("UNPACKED",n)',
   ].join('\n');
   await Tools.Files.mkdir(PKG_DIR, true);
   const tmp = RUNTIME + '/_unpack.py';
   await Tools.Files.write(tmp, PY);
-  const r = await sh('python3 ' + q(tmp) + ' ' + q(LIBS_B64) + ' ' + q(PKG_DIR + '/local'), 180000);
+  // b64 体积达 2MB，不能作为命令行参数（超 ARG_MAX 会返回 126）
+  const b64f = RUNTIME + '/_libs.b64';
+  await Tools.Files.write(b64f, LIBS_B64);
+  const r = await sh('python3 ' + q(tmp) + ' ' + q(b64f) + ' ' + q(PKG_DIR), 300000);
   if (r.out.indexOf('UNPACKED') < 0) {
     throw new Error('typst 库解包失败：' + String(r.out || '').slice(0, 300));
   }
@@ -846,20 +861,52 @@ exports.pdf_selfcheck = wrap(pdf_selfcheck);
 '''
 
 # ---- 内嵌 typst 库（meander / basho），gzip+b64 单条数据 ----
-LIB_DIRS = ['meander/0.4.6', 'basho/0.1.0']
+# 内嵌 typst 包。key 带 local/ 或 preview/ 前缀，解包到 PKG_DIR 下。
+LIB_DIRS = ['local/meander/0.4.6', 'local/basho/0.1.0']
+# preview 包（学科图形用）：cetz 量图、molchemist 化学结构式带 WASM、
+# cetz-plot 函数图、fletcher 流程图、alchemist 骨架式、chemformula 化学式。
+_PREVIEW = [
+    'preview/cetz/0.5.3', 'preview/cetz/0.5.2',        # 0.5.2 是 cetz-plot 的依赖
+    'preview/cetz-plot/0.1.4', 'preview/cetz-venn/0.2.0',
+    'preview/cetz-fields/0.2.0', 'preview/fletcher/0.6.0',
+    'preview/molchemist/0.1.6', 'preview/alchemist/0.2.0',
+    'preview/chemformula/0.1.3', 'preview/ezchem/0.1.1',
+    'preview/physica/0.9.8', 'preview/oxifmt/1.0.0',
+    'preview/oxifmt/0.2.1', 'preview/tidy/0.3.0',
+]
+# 解包根目录：/sdcard/Download/.ai_pdf_runtime/typst-packages
+# 文本包在 LIB/typst-libs 下，preview 包直接读运行时的 typst-packages
 LIB_ROOT = os.path.join(LIB, 'typst-libs')
+PREVIEW_ROOT = '/sdcard/Download/.ai_pdf_runtime/typst-packages'
+# 只收这三类，其余（README/LICENSE/gallery 图片）跳过省体积
+_KEEP_EXT = ('.typ', '.toml', '.wasm')
+
+def _collect(root, prefix, out):
+    for _dp, _dn, _fs in sorted(os.walk(root)):
+        for _f in sorted(_fs):
+            if not _f.endswith(_KEEP_EXT):
+                continue
+            _fp = os.path.join(_dp, _f)
+            _key = prefix + '/' + os.path.relpath(_fp, root).replace(os.sep, '/')
+            if _f.endswith('.wasm'):
+                # 二进制：base64 存储，解包时按字节写
+                out[_key] = {'b64': base64.b64encode(open(_fp, 'rb').read()).decode('ascii')}
+            else:
+                out[_key] = open(_fp, encoding='utf-8').read()
+
 _libs = {}
 for _p in LIB_DIRS:
-    _r = os.path.join(LIB_ROOT, _p)
+    _r = os.path.join(LIB_ROOT, _p.split('/', 1)[1])
     if not os.path.isdir(_r):
         print('WARN lib dir missing:', _r)
         continue
-    for _dp, _dn, _fs in sorted(os.walk(_r)):
-        for _f in sorted(_fs):
-            if not (_f.endswith('.typ') or _f.endswith('.toml')):
-                continue
-            _fp = os.path.join(_dp, _f)
-            _libs[_p + '/' + os.path.relpath(_fp, _r)] = open(_fp, encoding='utf-8').read()
+    _collect(_r, _p, _libs)
+for _p in _PREVIEW:
+    _r = os.path.join(PREVIEW_ROOT, _p)
+    if not os.path.isdir(_r):
+        print('WARN preview pkg missing:', _r)
+        continue
+    _collect(_r, _p, _libs)
 import gzip as _gz
 # sort_keys + mtime=0：不信顺序和上时间戳就会让同内容构建出不同字节（实测两侧差 1520 字节）
 _libs_json = json.dumps(_libs, ensure_ascii=False, sort_keys=True).encode('utf-8')
