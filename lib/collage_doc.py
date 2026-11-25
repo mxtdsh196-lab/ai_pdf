@@ -31,3 +31,5 @@ if __name__ == '__main__':
     print(COLLAGE_DOC)
     print('---')
     print('lines:', COLLAGE_DOC.count('\n') + 1)
+_COMPACT = '【★ 写之前先记住 6 条（其余细节见 pdfxray.py 顶部注释）】\n1. alpha 是透明度不是不透明度：alpha=0 完全不透明，alpha=100 全透明。要 30% 不透明写 70。\n2. dot / ring 的 size 是半径不是直径：要直径 26 就写 13。\n3. 文字压照片上必须写 bg=真实底色，否则自动对比色会按画布猜，猜错就是黑字压雪山看不见。\n4. 中文字体没有 italic，用 skew=12 做伪斜体（style:italic 会静默失效）。\n5. block 高度由内容自动撑开，不是写死值。接在块后面的元素，用 pdf_xray 量真实 bbox 再定坐标。\n6. 想要「深色字压浅色条」（参考图最常见），用 block 做半透明浅条 + 深色字，不要白字硬压图再调蒙版。'
+COLLAGE_DOC = COLLAGE_DOC + "\n\n" + _COMPACT
