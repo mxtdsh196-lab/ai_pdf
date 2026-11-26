@@ -29,6 +29,12 @@ SUBJECT_DOC = "\n".join([
     "【流程图/框图】#import \"@preview/fletcher:0.6.0\" as f: diagram, node, edge",
     "node((0,0), [开始], corner-radius: 8pt, fill: white, stroke: black+.7pt)",
     "坑：矩形框用 corner-radius（写 radius 会缩成字中间一个小圈）；shape 传字符串 \"diamond\"；必须给 fill: white",
+ "【分子模型·球棍/空间填充/VSEPR】不用 import，主题已预置：",
+ "#mol[H2O]球棍；#molspace[H2O]空间填充；#mol[H2O, width:34mm]调尺寸",
+ "预置14个：H2O CO2 CH4 NH3 BF3 SO2 H2S HCl H2 Cl2 N2 PCl5 SF6 CCl4（写大写）",
+ "★空间填充默认不标元素符号（球相叠会压字）；要标就调 #molecule并传 labels: true",
+ "★自己搭：#ball((x,y), r,颜色, lab: [O])放在 cetz.canvas({...})里",
+ "【结构式与模型分工】骨架式/平面式用 molchemist的 SMILES；立体球棍与 VSEPR用 #mol；空间填充用 #molspace",
 ])
 
 if __name__ == '__main__':
