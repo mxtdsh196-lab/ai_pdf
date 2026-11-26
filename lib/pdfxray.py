@@ -385,6 +385,11 @@ def anomalies(p, tol=1.0):
     border_rects = [(s['rect'], s.get('stroke')) for s in shapes
         if s['kind'] in ('stroke', 'fill') and s.get('stroke')
         and _is_frame(s)]
+    #容器判据：框内至少有一个文字中心，才拿它判跨框。
+    #纯图形（圆/多边形/弧）框内没有文字，不当容器——否则图上的点标签（A/B/C）会被判「压穿」。
+    _tc = [((t['rect'].x0 + t['rect'].x1) /2, (t['rect'].y0 + t['rect'].y1) /2) for t in texts]
+    border_rects = [(r, sc) for r, sc in border_rects
+                    if any(r.x0 <= cx <= r.x1 and r.y0 <= cy <= r.y1 for cx, cy in _tc)]
 
     def contained_in_any(r):
         for fr in fill_rects:
