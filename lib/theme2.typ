@@ -1132,3 +1132,113 @@
     block(width: 100%)[#second],
   )
 }
+
+// ----------分子模型（球棍 /空间填充 / VSEPR） ----------
+//纯矢量：径向渐变球 +粗键。无 WASM、无外部数据，体积为0。
+//用法：::: draw里写 #molecule("CH4")或 #molecule("H2O", style: "space")
+#import "@preview/cetz:0.5.3" as cetz
+
+//元素：颜色、半径、字色
+#let _ecol2 = (
+ "H": rgb("#EDEDED"), "C": rgb("#3F3F46"), "N": rgb("#3050F8"),
+ "O": rgb("#E8413A"), "F": rgb("#7CD44A"), "Cl": rgb("#2FA84F"),
+ "Br": rgb("#A62929"), "S": rgb("#E8C547"), "P": rgb("#F08C2E"),
+ "B": rgb("#F2B5B5"),
+)
+#let _erad2 = (
+ "H":0.26, "C":0.36, "N":0.35, "O":0.34, "F":0.30,
+ "Cl":0.34, "Br":0.36, "S":0.38, "P":0.38, "B":0.34,
+)
+#let _etxt2 = (
+ "H": rgb("#1A1A1A"), "C": rgb("#FFFFFF"), "N": rgb("#FFFFFF"),
+ "O": rgb("#FFFFFF"), "F": rgb("#1A1A1A"), "Cl": rgb("#FFFFFF"),
+ "Br": rgb("#FFFFFF"), "S": rgb("#1A1A1A"), "P": rgb("#1A1A1A"),
+ "B": rgb("#1A1A1A"),
+)
+#let _ecol(e) = _ecol2.at(e, default: rgb("#888888"))
+#let _erad(e) = _erad2.at(e, default:0.34)
+#let _etxt(e) = _etxt2.at(e, default: rgb("#FFFFFF"))
+
+//构型的二维投影（已算好坐标，Typst侧不做算术，避开空格坑）
+//数值是配体方向与相对键长，长度不等即有透视感
+#let _shape = (
+ "linear": ((1.0,0.0), (-1.0,0.0)),
+ "bent": ((0.79, -0.61), (-0.79, -0.61)),
+ "trigonal": ((0.0,1.0), (-0.87, -0.50), (0.87, -0.50)),
+ "tetra": ((0.0,1.0), (-0.87, -0.45), (0.87, -0.45), (0.0, -0.66)),
+ "pyramid": ((0.0,1.0), (-0.87, -0.40), (0.87, -0.40)),
+ "bipyramid": ((0.0,1.0), (0.0, -1.0), (-0.90,0.0), (0.90,0.0), (0.0,0.25)),
+ "octa": ((0.0,1.0), (0.0, -1.0), (-1.0,0.0), (1.0,0.0), (-0.62,0.45), (0.62,0.45)),
+)
+
+//分子：中心、配体、构型、键角说明
+#let _mol = (
+ "H2O": (c: "O", l: ("H", "H"), s: "bent", note: "104.5° V形"),
+ "CO2": (c: "C", l: ("O", "O"), s: "linear", note: "180°直线"),
+ "CH4": (c: "C", l: ("H", "H", "H", "H"), s: "tetra", note: "109.5°正四面体"),
+ "NH3": (c: "N", l: ("H", "H", "H"), s: "pyramid", note: "107°三角锥"),
+ "BF3": (c: "B", l: ("F", "F", "F"), s: "trigonal", note: "120°平面三角"),
+ "SO2": (c: "S", l: ("O", "O"), s: "bent", note: "119° V形"),
+ "H2S": (c: "S", l: ("H", "H"), s: "bent", note: "92° V形"),
+ "HCl": (c: "H", l: ("Cl",), s: "linear", note: "直线"),
+ "H2": (c: "H", l: ("H",), s: "linear", note: "直线"),
+ "Cl2": (c: "Cl", l: ("Cl",), s: "linear", note: "直线"),
+ "N2": (c: "N", l: ("N",), s: "linear", note: "叁键直线"),
+ "PCl5": (c: "P", l: ("Cl", "Cl", "Cl", "Cl", "Cl"), s: "bipyramid", note: "90°/120°三角双锥"),
+ "SF6": (c: "S", l: ("F", "F", "F", "F", "F", "F"), s: "octa", note: "90°正八面体"),
+ "CCl4": (c: "C", l: ("Cl", "Cl", "Cl", "Cl"), s: "tetra", note: "109.5°正四面体"),
+)
+
+#let mol-names() = _mol.keys().join(", ")
+
+#let molecule(name, style: "ball", width:42mm, labels: true, sc:1.0) = {
+ let key = name.trim()
+ let m = _mol.at(key, default: none)
+ if m == none {
+ [分子 #key /不在预置表，可用：] + mol-names()
+ } else {
+ let c = m.c
+ let lig = m.l
+ let dirs = _shape.at(m.s)
+ let sp = style == "space"
+ let showlab = if sp {false } else {labels }
+ let d = if sp {0.74 } else {0.98 }
+ let rs = if sp {1.52 } else {0.86 }
+ let strokew = if sp { none } else {0.085cm + rgb("#9AA3B2") }
+ let unit = width *0.29
+ cetz.canvas(length: unit, {
+ import cetz.draw: *
+ if not sp {
+ for i in range(lig.len()) {
+ let dv = dirs.at(i)
+ line((0,0), (dv.at(0) * d, dv.at(1) * d), stroke: strokew)
+ }
+ }
+ for i in range(lig.len()) {
+ let e = lig.at(i)
+ let dv = dirs.at(i)
+ let p = (dv.at(0) * d, dv.at(1) * d)
+ let rc = _erad(e) * rs * sc
+ circle(p, radius: rc, fill: gradient.radial(
+ (_ecol(e).lighten(72%),0%), (_ecol(e),58%), (_ecol(e).darken(28%),100%),
+ center: (-26%, -26%), radius:140%,
+ ), stroke:0.3pt + _ecol(e).darken(35%))
+ if showlab {
+ content(p, text(size: rc * unit *1.15, weight: "bold", fill: _etxt(e), e))
+ }
+ }
+ circle((0,0), radius: _erad(c) * rs * sc, fill: gradient.radial(
+ (_ecol(c).lighten(72%),0%), (_ecol(c),58%), (_ecol(c).darken(28%),100%),
+ center: (-26%, -26%), radius:140%,
+ ), stroke:0.3pt + _ecol(c).darken(35%))
+ if showlab {
+ content((0,0), text(size: _erad(c) * rs * sc * unit *1.2, weight: "bold", fill: _etxt(c), c))
+ }
+ })
+ }
+}
+
+//方便调用的两个包装：不需要写字符串引号
+// #mol[H2O]球棍； #molspace[H2O]空间填充
+#let mol(body, width:42mm, labels: true) = molecule(body.text, style: "ball", width: width, labels: labels)
+#let molspace(body, width:42mm) = molecule(body.text, style: "space", width: width)
