@@ -416,34 +416,15 @@ def preprocess(md):
     return "\n".join(_fin)
 
 
-def _math(body):
-    """LaTeX -> Typst 数学。转换不了的命令会退成纯文本，绝不让 LaTeX 原样进 Typst。"""
+def _math(body, block=False):
+    """LaTeX → Typst数学。走 mitex（Rust/WASM，完整 LaTeX），失败退纯文本。"""
     raw = body
-    try:
-        import texmath
-        r = texmath.convert(body)
-    except Exception as e:
-        WARNINGS.append("公式转换抛异常（已改为纯文本）：%s —— %s"
-                        % (raw.strip()[:40], str(e)[:60]))
+    if "`" in raw:
+        WARNINGS.append("公式里有反引号，mitex的 raw字符串会提前终止，已改为纯文本：%s" % raw.strip()[:40])
         return _math_fallback(raw)
-
-    if not r:
-        WARNINGS.append("公式转换结果为空（已改为纯文本）：%s" % raw.strip()[:40])
-        return _math_fallback(raw)
-
-    # texmath 遇到不认识的 LaTeX 命令是「去掉反斜杠、原样留着」：
-    #   \badcommand{x}  ->  badcommand{x}
-    # 这串东西进 Typst 数学环境必然 unknown variable。
-    # 判据：「裸多字母标识符紧跟 ( 或 {」，且不在 Typst 数学函数白名单里。
-    for m in _re.finditer(r"(?<![A-Za-z0-9_])([A-Za-z]{2,})\s*[({]", r):
-        fn = m.group(1)
-        if fn not in TYPST_MATH_FUNCS:
-            WARNINGS.append(
-                "公式里有不支持的 LaTeX 命令 %s，已整条改为纯文本（不再是数学排版）：%s"
-                % (fn, raw.strip()[:40]))
-            return _math_fallback(raw)
-    return r
-
+    if block:
+        return "#mimath(`%s`)" % raw
+    return "#mi(`\\textstyle %s`)" % raw
 
 def _math_fallback(raw):
     """把无法转换的公式降级成普通文字，保证 PDF 能编出来。"""
@@ -2745,10 +2726,10 @@ class R:
             return "`%s`" % c[1]
         if t == "Math":
             kind = c[0].get("t")
-            body = _math(c[1])
+            body = _math(c[1], block=(kind == "DisplayMath"))
             if kind == "DisplayMath":
-                return "\n$ %s $\n\n" % body
-            return " $%s$ " % body
+                return chr(10) + body + chr(10) + chr(10)
+            return " " + body + " "
         if t == "Link":
             alt, target = c[1], c[2]
             url = target[0] if target else ""
