@@ -151,6 +151,7 @@ def collect(p):
             'rect': rr,
             'fill': _hex(d.get('fill')) if t in ('f', 'fs') else None,
             'stroke': _hex(d.get('color')) if t in ('s', 'fs') else None,
+            'straight': (d.get('items') and len(d['items']) ==1 and d['items'][0][0] == 'l'),
         })
 
     # --- 补漏：get_bboxlog() 能看见 shading/pattern，drawings 看不见 ---
@@ -371,8 +372,19 @@ def anomalies(p, tol=1.0):
 
     # 收集填充区（用来判断文字是否被完整包住）
     fill_rects = [s['rect'] for s in shapes if s['kind'] == 'fill']
+    #线不是框：cetz/手绘线的 stroke也有 rect，当框用会误报。
+    #实测：球棍模型的键被当成边框，元素符号被判「压穿」10处噪声。
+    #判据：宽高都 >=4pt且长宽比 <=6才当框。
+    def _is_frame(s):
+        if s.get('straight'):
+            return False
+        r = s['rect']
+        if r.width <4 or r.height <4:
+            return False
+        return max(r.width, r.height) / max(1e-6, min(r.width, r.height)) <=6
     border_rects = [(s['rect'], s.get('stroke')) for s in shapes
-                    if s['kind'] in ('stroke', 'fill') and s.get('stroke')]
+        if s['kind'] in ('stroke', 'fill') and s.get('stroke')
+        and _is_frame(s)]
 
     def contained_in_any(r):
         for fr in fill_rects:
