@@ -140,7 +140,7 @@ COMPONENTS = (
  '**每个 ::: 必须配对闭合**：开头 ::: progress 换行写数据，结尾单独一行 :::。漏了闭合后面全乱。'
  '行内：[重点]{.badge .primary}徽章；==高亮==荧光标记。'
  '按字体：[文字]{.font-Cinzel} 改单段字体（名字里的空格写下划线）；::: font-Cinzel 到 ::: 之间整块换字体。'
-  '数学公式：直接写 LaTeX，工具会自动转 Typst。行内 $E=mc^2$，行间 $$\\frac{a}{b}$$；' '支持 frac/sqrt/sqrt[n]/sum/int/lim/matrix/greek/text{}/hat/vec，不用自己写 Typst 数学语法。'
+  '数学公式：直接写 LaTeX，工具会自动转 Typst。行内 $E=mc^2$，行间 $$\\frac{a}{b}$$；' '完整 LaTeX由 mitex解析（分式/根号/上下标/希腊字母/求和积分/矩阵/分段函数 cases/数集 mathbb R、mathbb N/极限），行内自动 textstyle不撑行高，不用自己写 Typst数学语法。'
   '【theme=slide 幻灯片专属】每个 # 一级标题 = 一页，自动加蓝底白字页眉条并分页，不用写 ::: pagebreak。'
   '可用版式（数据行同样用 | 分隔）：'
   '::: slide-cover 标题|副标题|胶囊标签|底部信息 （封面页，放第一个）'
@@ -372,7 +372,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.5.3',
+ 'version': '2.5.4',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('写 Markdown出可打印的中文排版 PDF，Typst引擎。'
@@ -864,7 +864,7 @@ _PREVIEW = [
     'preview/molchemist/0.1.6', 'preview/alchemist/0.2.0',
     'preview/chemformula/0.1.3', 'preview/ezchem/0.1.1',
     'preview/physica/0.9.8', 'preview/oxifmt/1.0.0',
-    'preview/oxifmt/0.2.1', 'preview/tidy/0.3.0', 'preview/zap/0.6.0', 'preview/ctz-euclide/0.3.0', 'preview/quick-vertex/0.2.0', 'preview/conic-toan/0.4.2',
+    'preview/oxifmt/0.2.1', 'preview/tidy/0.3.0', 'preview/zap/0.6.0', 'preview/ctz-euclide/0.3.0', 'preview/quick-vertex/0.2.0', 'preview/conic-toan/0.4.2', 'preview/mitex/0.2.7',
 ]
 # 解包根目录：/sdcard/Download/.ai_pdf_runtime/typst-packages
 # 文本包在 LIB/typst-libs 下，preview 包直接读运行时的 typst-packages
