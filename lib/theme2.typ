@@ -1161,14 +1161,24 @@
 
 //构型的二维投影（已算好坐标，Typst侧不做算术，避开空格坑）
 //数值是配体方向与相对键长，长度不等即有透视感
+#let _proj(p, ax:20deg, ay:25deg) = {
+ let x = p.at(0)
+ let y = p.at(1)
+ let z = if p.len() >2 { p.at(2) } else {0.0 }
+ let x1 = x * calc.cos(ay) + z * calc.sin(ay)
+ let z1 = -x * calc.sin(ay) + z * calc.cos(ay)
+ let y2 = y * calc.cos(ax) - z1 * calc.sin(ax)
+ let z2 = y * calc.sin(ax) + z1 * calc.cos(ax)
+ (x1, y2, z2)
+}
 #let _shape = (
- "linear": ((1.0,0.0), (-1.0,0.0)),
- "bent": ((0.79, -0.61), (-0.79, -0.61)),
- "trigonal": ((0.0,1.0), (-0.87, -0.50), (0.87, -0.50)),
- "tetra": ((0.0,1.0), (-0.87, -0.45), (0.87, -0.45), (0.0, -0.66)),
- "pyramid": ((0.0,1.0), (-0.87, -0.40), (0.87, -0.40)),
- "bipyramid": ((0.0,1.0), (0.0, -1.0), (-0.90,0.0), (0.90,0.0), (0.0,0.25)),
- "octa": ((0.0,1.0), (0.0, -1.0), (-1.0,0.0), (1.0,0.0), (-0.62,0.45), (0.62,0.45)),
+ "linear": ((1.0,0.0,0.0), (-1.0,0.0,0.0)),
+ "bent": ((0.79, -0.61,0.0), (-0.79, -0.61,0.0)),
+ "trigonal": ((0.0,1.0,0.0), (-0.87, -0.50,0.0), (0.87, -0.50,0.0)),
+ "tetra": ((0.58,0.58,0.58), (0.58, -0.58, -0.58), (-0.58,0.58, -0.58), (-0.58, -0.58,0.58)),
+ "pyramid": ((0.0, -0.50,0.86), (0.76, -0.50, -0.43), (-0.76, -0.50, -0.43)),
+ "bipyramid": ((0.0,1.0,0.0), (0.0, -1.0,0.0), (0.95,0.0,0.30), (-0.48,0.83, -0.15), (-0.48, -0.83, -0.15)),
+ "octa": ((0.0,1.0,0.0), (0.0, -1.0,0.0), (-1.0,0.0,0.0), (1.0,0.0,0.0), (0.0,0.0,1.0), (0.0,0.0, -1.0)),
 )
 
 //分子：中心、配体、构型、键角说明
@@ -1191,51 +1201,53 @@
 
 #let mol-names() = _mol.keys().join(", ")
 
-#let molecule(name, style: "ball", width:42mm, labels: true, sc:1.0) = {
- let key = name.trim()
- let m = _mol.at(key, default: none)
- if m == none {
- [分子 #key /不在预置表，可用：] + mol-names()
- } else {
- let c = m.c
- let lig = m.l
- let dirs = _shape.at(m.s)
- let sp = style == "space"
- let showlab = if sp {false } else {labels }
- let d = if sp {0.74 } else {0.98 }
- let rs = if sp {1.52 } else {0.86 }
- let strokew = if sp { none } else {0.085cm + rgb("#9AA3B2") }
- let unit = width *0.29
- cetz.canvas(length: unit, {
- import cetz.draw: *
- if not sp {
- for i in range(lig.len()) {
- let dv = dirs.at(i)
- line((0,0), (dv.at(0) * d, dv.at(1) * d), stroke: strokew)
- }
- }
- for i in range(lig.len()) {
- let e = lig.at(i)
- let dv = dirs.at(i)
- let p = (dv.at(0) * d, dv.at(1) * d)
- let rc = _erad(e) * rs * sc
- circle(p, radius: rc, fill: gradient.radial(
- (_ecol(e).lighten(72%),0%), (_ecol(e),58%), (_ecol(e).darken(28%),100%),
- center: (-26%, -26%), radius:140%,
- ), stroke:0.3pt + _ecol(e).darken(35%))
- if showlab {
- content(p, text(size: rc * unit *1.15, weight: "bold", fill: _etxt(e), e))
- }
- }
- circle((0,0), radius: _erad(c) * rs * sc, fill: gradient.radial(
- (_ecol(c).lighten(72%),0%), (_ecol(c),58%), (_ecol(c).darken(28%),100%),
- center: (-26%, -26%), radius:140%,
- ), stroke:0.3pt + _ecol(c).darken(35%))
- if showlab {
- content((0,0), text(size: _erad(c) * rs * sc * unit *1.2, weight: "bold", fill: _etxt(c), c))
- }
- })
- }
+#let molecule(name, style: "ball", width:42mm, labels: true, sc:1.0, ax:20deg, ay:25deg) = {
+  let key = name.trim()
+  let m = _mol.at(key, default: none)
+  if m == none {
+    [分子 #(key)不在预置表，可用：] + mol-names()
+  } else {
+    let c = m.c
+    let lig = m.l
+    let dirs = _shape.at(m.s)
+    let sp = style == "space"
+    let showlab = if sp {false } else {labels }
+    let d = if sp {0.74 } else {0.98 }
+    let rs = if sp {1.52 } else {0.86 }
+    let unit = width *0.29
+    //三维方向 →正交投影，按深度排序（画家算法），半径按深度缩放
+    let items = lig.enumerate().map(((idx, e)) => {
+      let dv = dirs.at(idx)
+      let dvz = if dv.len() >2 { dv.at(2) } else {0.0 }
+      let pr = _proj((dv.at(0) * d, dv.at(1) * d, dvz), ax: ax, ay: ay)
+      (z: pr.at(2), e: e, x: pr.at(0), y: pr.at(1), isC: false)
+    })
+    items = items + ((z:0.0, e: c, x:0.0, y:0.0, isC: true),)
+    let ord = items.sorted(key: it => it.z)
+    cetz.canvas(length: unit, {
+      import cetz.draw: *
+      for it in ord {
+        let k =1.0 / (1.0 -0.11 * it.z)
+        let rc = _erad(it.e) * rs * sc * k
+        let col = _ecol(it.e)
+        if not sp and not it.isC {
+         line((0,0), (it.x, it.y), stroke:0.085cm + rgb("#9AA3B2"))
+        }
+        circle((it.x, it.y), radius: rc, fill: gradient.radial(
+         (col.lighten(72%),0%), (col,58%), (col.darken(28%),100%),
+         center: (-26%, -26%), radius:140%,
+        ), stroke:0.3pt + col.darken(35%))
+      }
+      //标签单独一轮，画在所有球之上
+      if showlab {
+        for it in ord {
+         let k2 =1.0 / (1.0 -0.11 * it.z)
+         let rc2 = _erad(it.e) * rs * sc * k2
+         content((it.x, it.y), text(size: rc2 * unit *1.15, weight: "bold", fill: _etxt(it.e), stroke: 0.16 * rc2 * unit + rgb("#FFFFFF"), it.e))
+        }
+      }
+    })
+  }
 }
 
 //方便调用的两个包装：不需要写字符串引号
