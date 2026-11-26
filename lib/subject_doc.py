@@ -53,6 +53,17 @@ SUBJECT_DOC = "\n".join([
  "})",
  "元件名可用的：resistor capacitor inductor battery switch lamp fuse diode transistor opamp logic；签名 (名称,起点, (rel:相对增量),标签)",
  "★实测：单个或两个元件能画；三个以上会挤在一起（rel语义不确定）、开关会被覆盖、闭合回路的 wire拐角也摸不清。要规整电路图就用 cetz原生 line画矩形回路、元件按绝对坐标摆，或者直接用 cetz手绘（矩形=电阻、长短平行线=电池、斜线=开关）",
+ "【线性规划可行域】#import \"@preview/quick-vertex:0.2.0\": feasible-region",
+ "#feasible-region(((1,1,4, \"<=\"), (1,3,6, \"<=\"), (-1,0,0, \"<=\"), (0,-1,0, \"<=\")), objective: (3,4), sense: \"max\", labels: ($x+y=4$, $x+3y=6$, $x=0$, $y=0$))",
+ "约束是 (a,b,c,op)表示 a·x+b·y op c，op取 <= >= < >；objective:(c1,c2)即 Z=c1x+c2y",
+ "自动输出：阴影可行域 +边界线 +顶点字母 +等值线 +max/min方向箭头 +顶点表（Z值、最优行高亮）+结论",
+ "★x>=0写成 (-1,0,0, \"<=\")、y>=0写成 (0,-1,0, \"<=\"（把不等式两边乘 -1变成 <=）",
+ "★图内标签是英文（Level lines / Vertex / Optimum）；要全中文就改用 cetz手画",
+ "【函数图像】#import \"@preview/conic-toan:0.4.2\": *",
+ "#ve-do-thi(x => x*x -2*x -3, xmin: -2.5, xmax:4.5, ten: $y = x^2 -2x -3$)",
+ "纯图形、无外语文字；坐标轴、刻度、比例自适应；xmin/xmax控制定义域，w:8cm控宽",
+ "★同包还有 ve-da-dien(多面体)、ve-thiet-dien(截面)、ve-khoi-xoay(旋转体)、ve-truc-3d(三维轴)、ve-mat-cong(曲面)，但未实测，用前先看 lib下签名",
+ "★khao-sat-ve-do-thi-ham-bac-hai(1,-2,-3)会输出完整「考察+变化表+图像」，但说明文字是越南语，中文场景只用 ve-do-thi",
 ])
 
 if __name__ == '__main__':
