@@ -971,6 +971,7 @@ class R:
         # 其余属于纯装饰图层：生成 SVG 叠在下面，文字仍用 Typst
         try:
             import fxgen
+            _fit = "cover"
             w = int(kvs.get("w") or 600)
             h = int(kvs.get("h") or 220)
             col = kvs.get("color") or kvs.get("c1")
@@ -991,7 +992,7 @@ class R:
                     path = _mkstemp(suffix=".png", prefix="fxn_")
                     open(path, "wb").write(png)
                     if body_txt:
-                        return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
+                        return "#fx-card([%s], %s, inset-v: %s, fit: %s)" % (body_txt, q(path), pad, q(_fit))
                     return ("#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path))
                 svg = fxgen.noise_texture(w, h)
             elif kind == "gradient":
@@ -1009,6 +1010,7 @@ class R:
                                           angle=int(_ang), strength=_gst,
                                           blur=float(_gblur))
             elif kind == "wave":
+                _fit = "stretch" # wave是装饰条，用 stretch让 SVG铺满容器而不被 cover裁掉两端
                 # amp=波幅 color=颜色
                 _amp = _num(("amp", "amplitude"), 8, 1, 40, "fx wave amp")
                 _wc = kvs.get("color") or kvs.get("c1")
@@ -1028,7 +1030,7 @@ class R:
             if not path:
                 return body_txt
             if body_txt:
-                return "#fx-card([%s], %s, inset-v: %s)" % (body_txt, q(path), pad)
+                return "#fx-card([%s], %s, inset-v: %s, fit: %s)" % (body_txt, q(path), pad, q(_fit))
             return ("#block(width: 100%%, above: 4pt, below: 4pt)[#image(%s, width: 100%%)]" % q(path))
         except Exception as e:
             WARNINGS.append("fx 生成失败：%s" % str(e)[:60])
