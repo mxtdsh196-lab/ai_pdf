@@ -8,6 +8,7 @@
 // 星号导入会覆盖 Typst 内置 pagebreak，导致 ::: pagebreak 和 sectiontoc 全废。
 // wrap 内部用到 placed/container/content，那里已有 import meander: *。
 #import "@local/meander:0.4.6" as meander
+#import "@preview/mitex:0.2.7": mi, mimath
 #import "@local/basho:0.1.0": tate
 
 #let accent = cfg.accent
