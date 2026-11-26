@@ -372,7 +372,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.4.1',
+ 'version': '2.4.2',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('写 Markdown出可打印的中文排版 PDF，Typst引擎。'
@@ -471,34 +471,16 @@ const PKG_DIR = RUNTIME + '/typst-packages';
 
 // 内嵌的 typst 库（gzip+b64 单条）解包到 RUNTIME/typst-packages/
 // 解包后 core.py 用 --package-path 指向它，@local/meander、@local/basho 即可用
+// 内嵌 typst包解包。
+//之前是 Python 逐文件写（267 次 open/write），在 /sdcard（FUSE）上实测约18s。
+//改成写一个 tar.gz 再 tar xzf 一次解，减少 syscall 次数。
 async function unpackLibs() {
-  const PY = [
-    'import base64,gzip,json,os,sys',
-    'src=sys.argv[1]; dst=sys.argv[2]',
-    // b64 有 2MB，作为命令行参数会超 ARG_MAX 报 126，必须从文件读
-    'b64=open(src,"r").read().strip()',
-    'd=json.loads(gzip.decompress(base64.b64decode(b64)).decode("utf-8"))',
-    'n=0',
-    'for rel,v in d.items():',
-    '    p=os.path.join(dst,rel)',
-    '    os.makedirs(os.path.dirname(p),exist_ok=True)',
-    '    if isinstance(v,dict):',
-    '        open(p,"wb").write(base64.b64decode(v["b64"]))',
-    '    else:',
-    '        open(p,"w",encoding="utf-8").write(v)',
-    '    n+=1',
-    'print("UNPACKED",n)',
-  ].join('\n');
-  await Tools.Files.mkdir(PKG_DIR, true);
-  const tmp = RUNTIME + '/_unpack.py';
-  await Tools.Files.write(tmp, PY);
-  // b64 体积达 2MB，不能作为命令行参数（超 ARG_MAX 会返回 126）
-  const b64f = RUNTIME + '/_libs.b64';
-  await Tools.Files.write(b64f, LIBS_B64);
-  const r = await sh('python3 ' + q(tmp) + ' ' + q(b64f) + ' ' + q(PKG_DIR), 300000);
-  if (r.out.indexOf('UNPACKED') < 0) {
-    throw new Error('typst 库解包失败：' + String(r.out || '').slice(0, 300));
-  }
+ await Tools.Files.mkdir(PKG_DIR, true);
+ const tgz = RUNTIME + "/_libs.tar.gz";
+ await Tools.Files.writeBinary(tgz, LIBS_B64);
+ const r = await sh("tar xzf " + q(tgz) + " -C " + q(PKG_DIR) + " && echo UNPACKED",180000);
+ if (r.out.indexOf("UNPACKED") <0) throw new Error("typst库解包失败：" + String(r.out || "").slice(0,300));
+ try { await sh("rm -f " + q(tgz),20000); } catch (e) {}
 }
 let ready = false;
 
@@ -807,6 +789,16 @@ async function batch_pdf(p) {
  });
  return await call('batch', a, 1800000);
 }
+//纯静态工具用：不跑 ensure()。
+// ensure()在版本变化后要解包267个文件（实测约18s），而 list_pdf_themes
+//只是返回硬编码清单，没理由等它。
+function wrapStatic(fn) {
+ return async function (params) {
+   const data = await fn(params || {});
+  complete({ success: !!(data && data.success !== false), data: data });
+ };
+}
+
 function wrap(fn) {
  return async function (params) {
  try {
@@ -836,7 +828,7 @@ function wrap(fn) {
 }
 exports.make_pdf = wrap(make_pdf);
 exports.render_pdf_preview = wrap(render_pdf_preview);
-exports.list_pdf_themes = wrap(list_pdf_themes);
+exports.list_pdf_themes = wrapStatic(list_pdf_themes);
 exports.pdf_info = wrap(pdf_info);
 exports.merge_pdfs = wrap(merge_pdfs);
 exports.split_pdf = wrap(split_pdf);
@@ -909,15 +901,19 @@ for _p in _PREVIEW:
     _collect(_r, _p, _libs)
 import gzip as _gz
 # sort_keys + mtime=0：不信顺序和上时间戳就会让同内容构建出不同字节（实测两侧差 1520 字节）
-_libs_json = json.dumps(_libs, ensure_ascii=False, sort_keys=True).encode('utf-8')
-try:
-    _gz_bytes = _gz.compress(_libs_json, 9, mtime=0)
-except TypeError:
-    import gzip as _gz2
-    _buf = io.BytesIO()
-    with _gz2.GzipFile(fileobj=_buf, mode='wb', compresslevel=9, mtime=0) as _f: _f.write(_libs_json)
-    _gz_bytes = _buf.getvalue()
-LIBS_B64 = base64.b64encode(_gz_bytes).decode('ascii')
+#打成 tar再 gzip：运行端一次 tar xzf解完，不用267次 open/write。
+#保留可复现：成员排序 + mtime=0 + uid/gid=0 + gzip mtime=0。
+#打成 tar再 gzip：运行端一次 tar xzf解完，不再用267次 open/write。
+#保留可复现：成员排序 + mtime=0 + uid/gid=0 + uname/gname空 + gzip mtime=0。
+#这个环境会把多行缩进压成1空格，所以这里全部写成单行表达式，不用 for/with块。
+import tarfile as _tf
+_tbuf = io.BytesIO()
+_tar = _tf.open(fileobj=_tbuf, mode='w', format=_tf.GNU_FORMAT)
+_items = [(r, base64.b64decode(v['b64']) if isinstance(v, dict) else v.encode('utf-8')) for r, v in sorted(_libs.items())]
+_mk = lambda r, d: (lambda t: (setattr(t, 'size', len(d)), setattr(t, 'mtime',0), setattr(t, 'uid',0), setattr(t, 'gid',0), setattr(t, 'uname', ''), setattr(t, 'gname', ''), setattr(t, 'mode',0o644), t)[-1])(_tf.TarInfo(r))
+[_tar.addfile(_mk(r, d), io.BytesIO(d)) for r, d in _items]
+_tar.close()
+LIBS_B64 = base64.b64encode(_gz.compress(_tbuf.getvalue(),9, mtime=0)).decode('ascii')
 if not _libs:
     raise SystemExit('ERROR: typst 库为空，检查 ' + LIB_ROOT)
 print('libs embedded:', len(_libs), 'files,', len(LIBS_B64), 'b64 chars')
