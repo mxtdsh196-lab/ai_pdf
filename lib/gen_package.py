@@ -372,7 +372,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.5.1',
+ 'version': '2.5.2',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('写 Markdown出可打印的中文排版 PDF，Typst引擎。'
@@ -864,7 +864,7 @@ _PREVIEW = [
     'preview/molchemist/0.1.6', 'preview/alchemist/0.2.0',
     'preview/chemformula/0.1.3', 'preview/ezchem/0.1.1',
     'preview/physica/0.9.8', 'preview/oxifmt/1.0.0',
-    'preview/oxifmt/0.2.1', 'preview/tidy/0.3.0', 'preview/zap/0.6.0', 'preview/ctz-euclide/0.3.0',
+    'preview/oxifmt/0.2.1', 'preview/tidy/0.3.0', 'preview/zap/0.6.0', 'preview/ctz-euclide/0.3.0', 'preview/quick-vertex/0.2.0', 'preview/conic-toan/0.4.2',
 ]
 # 解包根目录：/sdcard/Download/.ai_pdf_runtime/typst-packages
 # 文本包在 LIB/typst-libs 下，preview 包直接读运行时的 typst-packages
