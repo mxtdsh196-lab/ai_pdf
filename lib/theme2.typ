@@ -392,10 +392,10 @@
 
 // 背景图高度不能写死，也不能用 100%（place 的百分比相对页面，实测会撑到 472pt）。
 // 正确做法：用 block 包住内容让它自然撑开，再用 measure 取内容高度画背景。
-#let fx-card(body, src, inset-v: 5mm) = layout(size => block(width: 100%)[
+#let fx-card(body, src, inset-v:5mm, fit: "cover") = layout(size => block(width:100%)[
   #let inner = pad(x: inset-v, y: inset-v, body)
   #let h = measure(inner).height
-  #place(top + left, image(src, width: 100%, height: h, fit: "cover"))
+  #place(top + left, image(src, width: 100%, height: h, fit: fit))
   #inner
 ])
 
