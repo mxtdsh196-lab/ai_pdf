@@ -1141,7 +1141,7 @@
 
 //元素：颜色、半径、字色
 #let _ecol2 = (
- "H": rgb("#EDEDED"), "C": rgb("#3F3F46"), "N": rgb("#3050F8"),
+ "H": rgb("#CFCFCF"), "C": rgb("#3F3F46"), "N": rgb("#3050F8"),
  "O": rgb("#E8413A"), "F": rgb("#7CD44A"), "Cl": rgb("#2FA84F"),
  "Br": rgb("#A62929"), "S": rgb("#E8C547"), "P": rgb("#F08C2E"),
  "B": rgb("#F2B5B5"),
@@ -1232,13 +1232,13 @@
         let rc = _erad(it.e) * rs * sc * k
         let col = _ecol(it.e)
         if not sp and not it.isC {
-         line((0,0), (it.x, it.y), stroke:0.085cm + rgb("#9AA3B2"))
+         line((0,0), (it.x, it.y), stroke:0.065cm + rgb("#5A6472"))
         }
         circle((it.x, it.y), radius: rc, fill: gradient.radial(
-         (col.lighten(72%),0%), (col,58%), (col.darken(28%),100%),
-         center: (-26%, -26%), radius:140%,
+         (rgb("#FFFFFF"),0%), (col.lighten(70%),7%), (col.lighten(28%),20%), (col.lighten(4%),40%), (col,60%), (col.darken(20%),84%), (col.darken(32%),100%),
+         center: (-33%, -33%), radius:138%,
         ), stroke:0.3pt + col.darken(35%))
-      }
+             }
       //标签单独一轮，画在所有球之上
       if showlab {
         for it in ord {
