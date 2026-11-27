@@ -372,7 +372,7 @@ tools.append({
 
 meta = {
  'name': 'ai_pdf',
- 'version': '2.5.4',
+ 'version': '2.5.5',
  'display_name': {'zh': 'AI生成 PDF', 'en': 'AI PDF Maker'},
  'description': {
  'zh': ('写 Markdown出可打印的中文排版 PDF，Typst引擎。'
